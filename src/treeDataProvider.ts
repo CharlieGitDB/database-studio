@@ -191,6 +191,57 @@ export class DatabaseTreeDataProvider implements vscode.TreeDataProvider<Databas
             }
         }
 
+        if (element.itemType === 'database' && element.connectionId && element.databaseName) {
+            // Show keys for Redis or collections for MongoDB
+            const config = this.connectionManager.getConnection(element.connectionId);
+            if (!config) {
+                return [];
+            }
+
+            try {
+                const client = this.databaseManager.getClient(element.connectionId);
+                if (!client) {
+                    return [];
+                }
+
+                if (config.type === 'redis') {
+                    const redisClient = client as any; // RedisClient
+                    console.log('Fetching Redis keys for connection:', element.connectionId);
+                    const keys = await redisClient.getKeys();
+                    console.log('Keys fetched:', keys.length);
+                    return keys.map((keyInfo: any) =>
+                        new DatabaseTreeItem(
+                            `${keyInfo.key} (${keyInfo.type})`,
+                            vscode.TreeItemCollapsibleState.None,
+                            'key',
+                            element.connectionId,
+                            undefined,
+                            undefined,
+                            keyInfo.key
+                        )
+                    );
+                } else if (config.type === 'mongodb') {
+                    const mongoClient = client as any; // MongoDBClient
+                    const collections = await mongoClient.getCollections();
+                    return collections.map((collection: string) =>
+                        new DatabaseTreeItem(
+                            collection,
+                            vscode.TreeItemCollapsibleState.None,
+                            'collection',
+                            element.connectionId,
+                            undefined,
+                            element.databaseName,
+                            collection
+                        )
+                    );
+                }
+            } catch (error) {
+                vscode.window.showErrorMessage(`Failed to load items: ${error}`);
+                console.error('Error loading database items:', error);
+                return [];
+            }
+        }
+
         return [];
     }
 }

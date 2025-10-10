@@ -34,6 +34,9 @@ export class DataViewerPanel {
                     case 'delete':
                         await this.deleteRecord(message.connectionId, message.resource, message.data, message.schema);
                         break;
+                    case 'executeQuery':
+                        await this.executeQuery(message.connectionId, message.query, message.schema);
+                        break;
                 }
             },
             null,
@@ -109,7 +112,7 @@ export class DataViewerPanel {
                 return;
             }
 
-            this._panel.webview.html = this.getWebviewContent(data, connectionId, resource, config.type, schema);
+            this._panel.webview.html = this.getWebviewContent(data, connectionId, resource, config.type, schema, undefined);
         } catch (error) {
             this.showError(`Failed to load data: ${error}`);
         }
@@ -169,12 +172,44 @@ export class DataViewerPanel {
         }
     }
 
+    private async executeQuery(connectionId: string, query: string, schema?: string) {
+        try {
+            const client = this.databaseManager.getClient(connectionId);
+            const config = this.connectionManager.getConnection(connectionId);
+
+            if (!client || !config) {
+                this.showError('Connection not found');
+                return;
+            }
+
+            let data: QueryResult;
+
+            if (client instanceof PostgresClient) {
+                // Set search_path to the schema if provided
+                if (schema) {
+                    await (client as any).client.query(`SET search_path TO "${schema}", public`);
+                }
+                data = await client.executeQuery(query);
+            } else if (client instanceof MySQLClient) {
+                data = await client.executeQuery(query);
+            } else {
+                this.showError('Query execution not supported for this database type');
+                return;
+            }
+
+            this._panel.webview.html = this.getWebviewContent(data, connectionId, '', config.type, schema, query);
+            vscode.window.showInformationMessage('Query executed successfully');
+        } catch (error) {
+            this.showError(`Failed to execute query: ${error}`);
+        }
+    }
+
     private showError(message: string) {
         vscode.window.showErrorMessage(message);
         this._panel.webview.html = `<html><body><h2>Error</h2><p>${message}</p></body></html>`;
     }
 
-    private getWebviewContent(data: QueryResult, connectionId: string, resource: string, dbType: string, schema?: string): string {
+    private getWebviewContent(data: QueryResult, connectionId: string, resource: string, dbType: string, schema?: string, previousQuery?: string): string {
         const rows = data.rows.map(row => {
             return data.columns.map((col, idx) => {
                 const value = row[idx];
@@ -188,6 +223,8 @@ export class DataViewerPanel {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Database Viewer</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/codemirror.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/theme/monokai.min.css">
     <style>
         body {
             padding: 20px;
@@ -267,12 +304,59 @@ export class DataViewerPanel {
             padding: 6px;
             margin: 4px 0;
         }
+        .query-container {
+            margin-bottom: 20px;
+            border: 1px solid var(--vscode-panel-border);
+            border-radius: 4px;
+            padding: 10px;
+            background: var(--vscode-editor-background);
+        }
+        .query-editor-wrapper {
+            border: 1px solid var(--vscode-input-border);
+            border-radius: 4px;
+            overflow: hidden;
+        }
+        .CodeMirror {
+            height: auto;
+            min-height: 120px;
+            max-height: 400px;
+            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+            font-size: 14px;
+        }
+        .query-actions {
+            margin-top: 8px;
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+        .query-hint {
+            font-size: 11px;
+            color: var(--vscode-descriptionForeground);
+            margin-left: auto;
+        }
     </style>
 </head>
 <body>
-    <h2>${resource}</h2>
+    <h2>${resource || 'Query Results'}</h2>
+
+    <div class="query-container">
+        <div class="query-editor-wrapper">
+            <textarea
+                class="query-editor"
+                id="sqlQuery"
+                placeholder="-- Enter SQL query here&#x0a;-- Example: SELECT * FROM ${resource || 'table_name'} WHERE id > 10 LIMIT 50"
+                spellcheck="false"
+            >${previousQuery || ''}</textarea>
+        </div>
+        <div class="query-actions">
+            <button onclick="executeQuery()">▶ Execute Query</button>
+            ${resource ? '<button onclick="refresh()">🔄 Refresh Table</button>' : ''}
+            <span class="query-hint">Ctrl+Enter to execute</span>
+        </div>
+    </div>
+
     <div class="actions">
-        <button onclick="refresh()">Refresh</button>
+        ${!resource ? '' : '<button onclick="refresh()">Refresh</button>'}
     </div>
     <table>
         <thead>
@@ -302,6 +386,8 @@ export class DataViewerPanel {
         <button onclick="closeEdit()">Cancel</button>
     </div>
 
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/codemirror.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/mode/sql/sql.min.js"></script>
     <script>
         const vscode = acquireVsCodeApi();
         const data = ${JSON.stringify({ columns: data.columns, rows })};
@@ -310,6 +396,33 @@ export class DataViewerPanel {
         const dbType = '${dbType}';
         const schema = ${schema ? `'${schema}'` : 'undefined'};
         let currentEditRow = null;
+
+        // Initialize CodeMirror
+        const editor = CodeMirror.fromTextArea(document.getElementById('sqlQuery'), {
+            mode: 'text/x-sql',
+            theme: 'monokai',
+            lineNumbers: true,
+            lineWrapping: true,
+            indentUnit: 4,
+            smartIndent: true,
+            extraKeys: {
+                'Ctrl-Enter': function(cm) {
+                    executeQuery();
+                },
+                'Cmd-Enter': function(cm) {
+                    executeQuery();
+                }
+            }
+        });
+
+        function executeQuery() {
+            const query = editor.getValue().trim();
+            if (!query) {
+                alert('Please enter a SQL query');
+                return;
+            }
+            vscode.postMessage({ command: 'executeQuery', connectionId, query, schema });
+        }
 
         function refresh() {
             vscode.postMessage({ command: 'refresh', connectionId, resource, schema });
