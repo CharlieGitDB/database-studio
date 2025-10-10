@@ -50,11 +50,13 @@ export class DatabaseTreeDataProvider implements vscode.TreeDataProvider<Databas
     }
 
     setConnectionStatus(connectionId: string, connected: boolean): void {
+        console.log(`Setting connection status for ${connectionId}: ${connected}`);
         if (connected) {
             this.connectedDatabases.add(connectionId);
         } else {
             this.connectedDatabases.delete(connectionId);
         }
+        console.log('Connected databases:', Array.from(this.connectedDatabases));
         this.refresh();
     }
 
@@ -79,6 +81,7 @@ export class DatabaseTreeDataProvider implements vscode.TreeDataProvider<Databas
                     conn.id,
                     undefined,
                     undefined,
+                    undefined,
                     isConnected
                 );
             });
@@ -87,19 +90,28 @@ export class DatabaseTreeDataProvider implements vscode.TreeDataProvider<Databas
         if (element.itemType === 'connection' && element.connectionId) {
             // Show databases/collections/keys based on connection type
             const config = this.connectionManager.getConnection(element.connectionId);
-            if (!config || !this.isConnected(element.connectionId)) {
+            if (!config) {
+                console.log('Config not found for connection:', element.connectionId);
+                return [];
+            }
+
+            if (!this.isConnected(element.connectionId)) {
+                console.log('Connection not marked as connected:', element.connectionId);
                 return [];
             }
 
             try {
                 const client = this.databaseManager.getClient(element.connectionId);
                 if (!client) {
+                    console.log('Client not found for connection:', element.connectionId);
                     return [];
                 }
 
                 if (config.type === 'postgresql') {
                     const pgClient = client as any; // PostgresClient
+                    console.log('Fetching schemas for PostgreSQL connection:', element.connectionId);
                     const schemas = await pgClient.getSchemas();
+                    console.log('Schemas fetched:', schemas);
                     return schemas.map((schema: string) =>
                         new DatabaseTreeItem(
                             schema,

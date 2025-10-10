@@ -76,9 +76,14 @@ export function activate(context: vscode.ExtensionContext) {
             });
 
             database = await vscode.window.showInputBox({
-                prompt: 'Database name (optional)',
+                prompt: type === 'postgresql' ? 'Database name (required)' : 'Database name (optional)',
                 placeHolder: 'database'
             });
+
+            if (type === 'postgresql' && !database) {
+                vscode.window.showErrorMessage('Database name is required for PostgreSQL connections');
+                return;
+            }
         } else {
             password = await vscode.window.showInputBox({
                 prompt: 'Password (optional)',
@@ -136,8 +141,13 @@ export function activate(context: vscode.ExtensionContext) {
 
                 await databaseManager.connect(config);
                 treeDataProvider.setConnectionStatus(item.connectionId, true);
+
+                // Auto-expand the connection to show schemas/tables
+                await vscode.commands.executeCommand('dbClientExplorer.focus');
+
                 vscode.window.showInformationMessage(`Connected to ${config.name}`);
             } catch (error) {
+                console.error('Connection error:', error);
                 vscode.window.showErrorMessage(`Failed to connect: ${error}`);
             }
         }

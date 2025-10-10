@@ -62,9 +62,14 @@ export class PostgresClient {
 
         const columns = result.fields.map((field: any) => field.name);
 
+        // Convert row objects to arrays to match expected format
+        const rows = result.rows.map((row: any) =>
+            columns.map(col => row[col])
+        );
+
         return {
             columns,
-            rows: result.rows
+            rows
         };
     }
 
