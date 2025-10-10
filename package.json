@@ -1,0 +1,136 @@
+{
+  "name": "db-client-gui",
+  "displayName": "Database Client GUI",
+  "description": "GUI for managing Redis, MySQL, PostgreSQL, and MongoDB databases",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onView:dbClientExplorer"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "dbClientContainer",
+          "title": "Database Client",
+          "icon": "resources/database.svg"
+        }
+      ]
+    },
+    "views": {
+      "dbClientContainer": [
+        {
+          "id": "dbClientExplorer",
+          "name": "Connections"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "dbClient.addConnection",
+        "title": "Add Database Connection",
+        "icon": "$(add)"
+      },
+      {
+        "command": "dbClient.refreshConnections",
+        "title": "Refresh Connections",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "dbClient.deleteConnection",
+        "title": "Delete Connection",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "dbClient.viewData",
+        "title": "View Data",
+        "icon": "$(eye)"
+      },
+      {
+        "command": "dbClient.editRecord",
+        "title": "Edit Record",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "dbClient.deleteRecord",
+        "title": "Delete Record",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "dbClient.connect",
+        "title": "Connect",
+        "icon": "$(plug)"
+      },
+      {
+        "command": "dbClient.disconnect",
+        "title": "Disconnect",
+        "icon": "$(debug-disconnect)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "dbClient.addConnection",
+          "when": "view == dbClientExplorer",
+          "group": "navigation"
+        },
+        {
+          "command": "dbClient.refreshConnections",
+          "when": "view == dbClientExplorer",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "dbClient.connect",
+          "when": "view == dbClientExplorer && viewItem == connection-disconnected",
+          "group": "inline"
+        },
+        {
+          "command": "dbClient.disconnect",
+          "when": "view == dbClientExplorer && viewItem == connection-connected",
+          "group": "inline"
+        },
+        {
+          "command": "dbClient.deleteConnection",
+          "when": "view == dbClientExplorer && viewItem =~ /connection/",
+          "group": "inline"
+        },
+        {
+          "command": "dbClient.viewData",
+          "when": "view == dbClientExplorer && viewItem =~ /table|collection|key/",
+          "group": "inline"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile && npm run lint",
+    "lint": "eslint src --ext ts",
+    "test": "node ./out/test/runTest.js"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/pg": "^8.15.5",
+    "@types/vscode": "^1.85.0",
+    "@typescript-eslint/eslint-plugin": "^6.0.0",
+    "@typescript-eslint/parser": "^6.0.0",
+    "eslint": "^8.40.0",
+    "typescript": "^5.3.0"
+  },
+  "dependencies": {
+    "ioredis": "^5.3.2",
+    "mongodb": "^6.3.0",
+    "mysql2": "^3.6.5",
+    "pg": "^8.11.3"
+  }
+}
