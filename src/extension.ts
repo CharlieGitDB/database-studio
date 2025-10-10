@@ -178,6 +178,7 @@ export function activate(context: vscode.ExtensionContext) {
                 }
 
                 let resource: string;
+                let schema: string | undefined;
 
                 if (item.itemType === 'database' && item.databaseName) {
                     // Show tables/collections/keys
@@ -210,6 +211,7 @@ export function activate(context: vscode.ExtensionContext) {
                     resource = selected;
                 } else if (item.tableName) {
                     resource = item.tableName;
+                    schema = item.schemaName; // Capture schema name for PostgreSQL tables
                 } else {
                     vscode.window.showErrorMessage('Invalid selection');
                     return;
@@ -220,7 +222,8 @@ export function activate(context: vscode.ExtensionContext) {
                     databaseManager,
                     connectionManager,
                     item.connectionId,
-                    resource
+                    resource,
+                    schema
                 );
             } catch (error) {
                 vscode.window.showErrorMessage(`Failed to view data: ${error}`);

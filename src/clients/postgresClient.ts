@@ -52,12 +52,14 @@ export class PostgresClient {
         return result.rows.map((row: any) => row.table_name);
     }
 
-    async getTableData(tableName: string, limit: number = 100): Promise<QueryResult> {
+    async getTableData(tableName: string, schema?: string, limit: number = 100): Promise<QueryResult> {
         if (!this.client) {
             throw new Error('Not connected');
         }
 
-        const query = `SELECT * FROM "${tableName}" LIMIT ${limit}`;
+        // Construct fully qualified table name with schema if provided
+        const qualifiedTableName = schema ? `"${schema}"."${tableName}"` : `"${tableName}"`;
+        const query = `SELECT * FROM ${qualifiedTableName} LIMIT ${limit}`;
         const result = await this.client.query(query);
 
         const columns = result.fields.map((field: any) => field.name);
@@ -73,27 +75,29 @@ export class PostgresClient {
         };
     }
 
-    async updateRecord(tableName: string, primaryKey: string, primaryKeyValue: any, updates: Record<string, any>): Promise<void> {
+    async updateRecord(tableName: string, primaryKey: string, primaryKeyValue: any, updates: Record<string, any>, schema?: string): Promise<void> {
         if (!this.client) {
             throw new Error('Not connected');
         }
 
+        const qualifiedTableName = schema ? `"${schema}"."${tableName}"` : `"${tableName}"`;
         const setClause = Object.keys(updates)
             .map((key, index) => `"${key}" = $${index + 1}`)
             .join(', ');
 
         const values = [...Object.values(updates), primaryKeyValue];
-        const query = `UPDATE "${tableName}" SET ${setClause} WHERE "${primaryKey}" = $${values.length}`;
+        const query = `UPDATE ${qualifiedTableName} SET ${setClause} WHERE "${primaryKey}" = $${values.length}`;
 
         await this.client.query(query, values);
     }
 
-    async deleteRecord(tableName: string, primaryKey: string, primaryKeyValue: any): Promise<void> {
+    async deleteRecord(tableName: string, primaryKey: string, primaryKeyValue: any, schema?: string): Promise<void> {
         if (!this.client) {
             throw new Error('Not connected');
         }
 
-        const query = `DELETE FROM "${tableName}" WHERE "${primaryKey}" = $1`;
+        const qualifiedTableName = schema ? `"${schema}"."${tableName}"` : `"${tableName}"`;
+        const query = `DELETE FROM ${qualifiedTableName} WHERE "${primaryKey}" = $1`;
         await this.client.query(query, [primaryKeyValue]);
     }
 

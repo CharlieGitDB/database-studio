@@ -11,6 +11,7 @@ export class DataViewerPanel {
     public static currentPanel: DataViewerPanel | undefined;
     private readonly _panel: vscode.WebviewPanel;
     private _disposables: vscode.Disposable[] = [];
+    private currentSchema?: string;
 
     private constructor(
         panel: vscode.WebviewPanel,
@@ -25,13 +26,13 @@ export class DataViewerPanel {
             async message => {
                 switch (message.command) {
                     case 'refresh':
-                        await this.loadData(message.connectionId, message.resource);
+                        await this.loadData(message.connectionId, message.resource, message.schema);
                         break;
                     case 'edit':
-                        await this.editRecord(message.connectionId, message.resource, message.data);
+                        await this.editRecord(message.connectionId, message.resource, message.data, message.schema);
                         break;
                     case 'delete':
-                        await this.deleteRecord(message.connectionId, message.resource, message.data);
+                        await this.deleteRecord(message.connectionId, message.resource, message.data, message.schema);
                         break;
                 }
             },
@@ -45,7 +46,8 @@ export class DataViewerPanel {
         databaseManager: DatabaseManager,
         connectionManager: ConnectionManager,
         connectionId: string,
-        resource: string
+        resource: string,
+        schema?: string
     ) {
         const column = vscode.window.activeTextEditor
             ? vscode.window.activeTextEditor.viewColumn
@@ -53,7 +55,7 @@ export class DataViewerPanel {
 
         if (DataViewerPanel.currentPanel) {
             DataViewerPanel.currentPanel._panel.reveal(column);
-            DataViewerPanel.currentPanel.loadData(connectionId, resource);
+            DataViewerPanel.currentPanel.loadData(connectionId, resource, schema);
             return;
         }
 
@@ -68,10 +70,10 @@ export class DataViewerPanel {
         );
 
         DataViewerPanel.currentPanel = new DataViewerPanel(panel, databaseManager, connectionManager);
-        DataViewerPanel.currentPanel.loadData(connectionId, resource);
+        DataViewerPanel.currentPanel.loadData(connectionId, resource, schema);
     }
 
-    private async loadData(connectionId: string, resource: string) {
+    private async loadData(connectionId: string, resource: string, schema?: string) {
         try {
             const client = this.databaseManager.getClient(connectionId);
             const config = this.connectionManager.getConnection(connectionId);
@@ -80,6 +82,9 @@ export class DataViewerPanel {
                 this.showError('Connection not found');
                 return;
             }
+
+            // Store the current schema for use in edit/delete operations
+            this.currentSchema = schema;
 
             let data: QueryResult;
 
@@ -96,7 +101,7 @@ export class DataViewerPanel {
             } else if (client instanceof MySQLClient) {
                 data = await client.getTableData(resource);
             } else if (client instanceof PostgresClient) {
-                data = await client.getTableData(resource);
+                data = await client.getTableData(resource, schema);
             } else if (client instanceof MongoDBClient) {
                 data = await client.getCollectionData(resource);
             } else {
@@ -104,13 +109,13 @@ export class DataViewerPanel {
                 return;
             }
 
-            this._panel.webview.html = this.getWebviewContent(data, connectionId, resource, config.type);
+            this._panel.webview.html = this.getWebviewContent(data, connectionId, resource, config.type, schema);
         } catch (error) {
             this.showError(`Failed to load data: ${error}`);
         }
     }
 
-    private async editRecord(connectionId: string, resource: string, data: any) {
+    private async editRecord(connectionId: string, resource: string, data: any, schema?: string) {
         try {
             const client = this.databaseManager.getClient(connectionId);
             const config = this.connectionManager.getConnection(connectionId);
@@ -125,19 +130,19 @@ export class DataViewerPanel {
             } else if (client instanceof MySQLClient) {
                 await client.updateRecord(resource, data.primaryKey, data.primaryKeyValue, data.updates);
             } else if (client instanceof PostgresClient) {
-                await client.updateRecord(resource, data.primaryKey, data.primaryKeyValue, data.updates);
+                await client.updateRecord(resource, data.primaryKey, data.primaryKeyValue, data.updates, schema);
             } else if (client instanceof MongoDBClient) {
                 await client.updateDocument(resource, data.id, data.updates);
             }
 
             vscode.window.showInformationMessage('Record updated successfully');
-            await this.loadData(connectionId, resource);
+            await this.loadData(connectionId, resource, schema);
         } catch (error) {
             this.showError(`Failed to update record: ${error}`);
         }
     }
 
-    private async deleteRecord(connectionId: string, resource: string, data: any) {
+    private async deleteRecord(connectionId: string, resource: string, data: any, schema?: string) {
         try {
             const client = this.databaseManager.getClient(connectionId);
             const config = this.connectionManager.getConnection(connectionId);
@@ -152,13 +157,13 @@ export class DataViewerPanel {
             } else if (client instanceof MySQLClient) {
                 await client.deleteRecord(resource, data.primaryKey, data.primaryKeyValue);
             } else if (client instanceof PostgresClient) {
-                await client.deleteRecord(resource, data.primaryKey, data.primaryKeyValue);
+                await client.deleteRecord(resource, data.primaryKey, data.primaryKeyValue, schema);
             } else if (client instanceof MongoDBClient) {
                 await client.deleteDocument(resource, data.id);
             }
 
             vscode.window.showInformationMessage('Record deleted successfully');
-            await this.loadData(connectionId, resource);
+            await this.loadData(connectionId, resource, schema);
         } catch (error) {
             this.showError(`Failed to delete record: ${error}`);
         }
@@ -169,7 +174,7 @@ export class DataViewerPanel {
         this._panel.webview.html = `<html><body><h2>Error</h2><p>${message}</p></body></html>`;
     }
 
-    private getWebviewContent(data: QueryResult, connectionId: string, resource: string, dbType: string): string {
+    private getWebviewContent(data: QueryResult, connectionId: string, resource: string, dbType: string, schema?: string): string {
         const rows = data.rows.map(row => {
             return data.columns.map((col, idx) => {
                 const value = row[idx];
@@ -301,10 +306,11 @@ export class DataViewerPanel {
         const connectionId = '${connectionId}';
         const resource = '${resource}';
         const dbType = '${dbType}';
+        const schema = ${schema ? `'${schema}'` : 'undefined'};
         let currentEditRow = null;
 
         function refresh() {
-            vscode.postMessage({ command: 'refresh', connectionId, resource });
+            vscode.postMessage({ command: 'refresh', connectionId, resource, schema });
         }
 
         function editRow(rowIdx) {
@@ -337,6 +343,7 @@ export class DataViewerPanel {
                     command: 'edit',
                     connectionId,
                     resource,
+                    schema,
                     data: {
                         id: data.rows[currentEditRow][0],
                         updates
@@ -347,6 +354,7 @@ export class DataViewerPanel {
                     command: 'edit',
                     connectionId,
                     resource,
+                    schema,
                     data: {
                         key: data.rows[currentEditRow][0],
                         value: updates[data.columns[2]],
@@ -358,6 +366,7 @@ export class DataViewerPanel {
                     command: 'edit',
                     connectionId,
                     resource,
+                    schema,
                     data: {
                         primaryKey: data.columns[0],
                         primaryKeyValue: data.rows[currentEditRow][0],
@@ -381,6 +390,7 @@ export class DataViewerPanel {
                     command: 'delete',
                     connectionId,
                     resource,
+                    schema,
                     data: { id: data.rows[rowIdx][0] }
                 };
             } else if (dbType === 'redis') {
@@ -388,6 +398,7 @@ export class DataViewerPanel {
                     command: 'delete',
                     connectionId,
                     resource,
+                    schema,
                     data: { key: data.rows[rowIdx][0] }
                 };
             } else {
@@ -395,6 +406,7 @@ export class DataViewerPanel {
                     command: 'delete',
                     connectionId,
                     resource,
+                    schema,
                     data: {
                         primaryKey: data.columns[0],
                         primaryKeyValue: data.rows[rowIdx][0]
