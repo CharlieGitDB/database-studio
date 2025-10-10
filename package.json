@@ -43,6 +43,11 @@
         "icon": "$(refresh)"
       },
       {
+        "command": "dbClient.editConnection",
+        "title": "Edit Connection",
+        "icon": "$(edit)"
+      },
+      {
         "command": "dbClient.deleteConnection",
         "title": "Delete Connection",
         "icon": "$(trash)"
@@ -98,9 +103,14 @@
           "group": "inline"
         },
         {
+          "command": "dbClient.editConnection",
+          "when": "view == dbClientExplorer && viewItem =~ /connection/",
+          "group": "1_modify"
+        },
+        {
           "command": "dbClient.deleteConnection",
           "when": "view == dbClientExplorer && viewItem =~ /connection/",
-          "group": "inline"
+          "group": "2_danger"
         },
         {
           "command": "dbClient.viewData",

@@ -25,6 +25,11 @@ export class ConnectionManager {
         await this.saveConnections();
     }
 
+    async updateConnection(config: ConnectionConfig): Promise<void> {
+        this.connections.set(config.id, config);
+        await this.saveConnections();
+    }
+
     async deleteConnection(id: string): Promise<void> {
         this.connections.delete(id);
         await this.saveConnections();

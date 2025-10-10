@@ -112,6 +112,111 @@ export function activate(context: vscode.ExtensionContext) {
         treeDataProvider.refresh();
     });
 
+    // Edit connection command
+    const editConnectionCommand = vscode.commands.registerCommand('dbClient.editConnection', async (item) => {
+        if (item && item.connectionId) {
+            const existingConfig = connectionManager.getConnection(item.connectionId);
+            if (!existingConfig) {
+                vscode.window.showErrorMessage('Connection not found');
+                return;
+            }
+
+            // Disconnect if currently connected
+            const wasConnected = databaseManager.getClient(item.connectionId) !== undefined;
+            if (wasConnected) {
+                await databaseManager.disconnect(item.connectionId);
+                treeDataProvider.setConnectionStatus(item.connectionId, false);
+            }
+
+            const name = await vscode.window.showInputBox({
+                prompt: 'Connection name',
+                value: existingConfig.name
+            });
+
+            if (!name) {
+                return;
+            }
+
+            const host = await vscode.window.showInputBox({
+                prompt: 'Host',
+                value: existingConfig.host
+            });
+
+            if (!host) {
+                return;
+            }
+
+            const portStr = await vscode.window.showInputBox({
+                prompt: 'Port',
+                value: existingConfig.port.toString()
+            });
+
+            if (!portStr) {
+                return;
+            }
+
+            const port = parseInt(portStr);
+
+            let username: string | undefined;
+            let password: string | undefined;
+            let database: string | undefined;
+
+            if (existingConfig.type !== 'redis') {
+                username = await vscode.window.showInputBox({
+                    prompt: 'Username (optional)',
+                    value: existingConfig.username || ''
+                });
+
+                password = await vscode.window.showInputBox({
+                    prompt: 'Password (leave empty to keep existing, or enter new)',
+                    password: true,
+                    placeHolder: existingConfig.password ? '••••••••' : 'No password set'
+                });
+
+                // If password is empty, keep the existing one
+                if (!password) {
+                    password = existingConfig.password;
+                }
+
+                database = await vscode.window.showInputBox({
+                    prompt: existingConfig.type === 'postgresql' ? 'Database name (required)' : 'Database name (optional)',
+                    value: existingConfig.database || ''
+                });
+
+                if (existingConfig.type === 'postgresql' && !database) {
+                    vscode.window.showErrorMessage('Database name is required for PostgreSQL connections');
+                    return;
+                }
+            } else {
+                password = await vscode.window.showInputBox({
+                    prompt: 'Password (leave empty to keep existing, or enter new)',
+                    password: true,
+                    placeHolder: existingConfig.password ? '••••••••' : 'No password set'
+                });
+
+                // If password is empty, keep the existing one
+                if (!password) {
+                    password = existingConfig.password;
+                }
+            }
+
+            const updatedConfig: ConnectionConfig = {
+                id: existingConfig.id,
+                name,
+                type: existingConfig.type,
+                host,
+                port,
+                username,
+                password,
+                database
+            };
+
+            await connectionManager.updateConnection(updatedConfig);
+            treeDataProvider.refresh();
+            vscode.window.showInformationMessage(`Connection "${name}" updated successfully`);
+        }
+    });
+
     // Delete connection command
     const deleteConnectionCommand = vscode.commands.registerCommand('dbClient.deleteConnection', async (item) => {
         if (item && item.connectionId) {
@@ -234,6 +339,7 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(
         addConnectionCommand,
         refreshCommand,
+        editConnectionCommand,
         deleteConnectionCommand,
         connectCommand,
         disconnectCommand,
