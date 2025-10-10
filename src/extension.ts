@@ -10,7 +10,7 @@ export function activate(context: vscode.ExtensionContext) {
 
     const connectionManager = new ConnectionManager(context);
     const databaseManager = new DatabaseManager();
-    const treeDataProvider = new DatabaseTreeDataProvider(connectionManager);
+    const treeDataProvider = new DatabaseTreeDataProvider(connectionManager, databaseManager);
 
     const treeView = vscode.window.createTreeView('dbClientExplorer', {
         treeDataProvider

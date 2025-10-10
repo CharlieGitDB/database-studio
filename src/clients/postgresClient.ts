@@ -23,14 +23,30 @@ export class PostgresClient {
         }
     }
 
-    async getTables(): Promise<string[]> {
+    async getSchemas(): Promise<string[]> {
+        if (!this.client) {
+            throw new Error('Not connected');
+        }
+
+        const result = await this.client.query(
+            `SELECT schema_name FROM information_schema.schemata
+             WHERE schema_name NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
+             ORDER BY schema_name`
+        );
+
+        return result.rows.map((row: any) => row.schema_name);
+    }
+
+    async getTables(schema: string = 'public'): Promise<string[]> {
         if (!this.client) {
             throw new Error('Not connected');
         }
 
         const result = await this.client.query(
             `SELECT table_name FROM information_schema.tables
-             WHERE table_schema = 'public' AND table_type = 'BASE TABLE'`
+             WHERE table_schema = $1 AND table_type = 'BASE TABLE'
+             ORDER BY table_name`,
+            [schema]
         );
 
         return result.rows.map((row: any) => row.table_name);

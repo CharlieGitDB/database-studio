@@ -1,13 +1,15 @@
 import * as vscode from 'vscode';
 import { ConnectionManager } from './connectionManager';
 import { ConnectionConfig, DatabaseType } from './types';
+import { DatabaseManager } from './databaseManager';
 
 export class DatabaseTreeItem extends vscode.TreeItem {
     constructor(
         public readonly label: string,
         public readonly collapsibleState: vscode.TreeItemCollapsibleState,
-        public readonly itemType: 'connection' | 'database' | 'table' | 'collection' | 'key',
+        public readonly itemType: 'connection' | 'schema' | 'database' | 'table' | 'collection' | 'key',
         public readonly connectionId?: string,
+        public readonly schemaName?: string,
         public readonly databaseName?: string,
         public readonly tableName?: string,
         public readonly isConnected: boolean = false
@@ -22,6 +24,8 @@ export class DatabaseTreeItem extends vscode.TreeItem {
             this.iconPath = new vscode.ThemeIcon('symbol-field');
         } else if (itemType === 'key') {
             this.iconPath = new vscode.ThemeIcon('key');
+        } else if (itemType === 'schema') {
+            this.iconPath = new vscode.ThemeIcon('folder');
         } else if (itemType === 'database') {
             this.iconPath = new vscode.ThemeIcon('folder-library');
         }
@@ -36,7 +40,10 @@ export class DatabaseTreeDataProvider implements vscode.TreeDataProvider<Databas
 
     private connectedDatabases: Set<string> = new Set();
 
-    constructor(private connectionManager: ConnectionManager) {}
+    constructor(
+        private connectionManager: ConnectionManager,
+        private databaseManager: DatabaseManager
+    ) {}
 
     refresh(): void {
         this._onDidChangeTreeData.fire();
@@ -84,39 +91,91 @@ export class DatabaseTreeDataProvider implements vscode.TreeDataProvider<Databas
                 return [];
             }
 
-            // For now, return placeholder items
-            // These will be populated by actual database queries
-            if (config.type === 'redis') {
-                return [
+            try {
+                const client = this.databaseManager.getClient(element.connectionId);
+                if (!client) {
+                    return [];
+                }
+
+                if (config.type === 'postgresql') {
+                    const pgClient = client as any; // PostgresClient
+                    const schemas = await pgClient.getSchemas();
+                    return schemas.map((schema: string) =>
+                        new DatabaseTreeItem(
+                            schema,
+                            vscode.TreeItemCollapsibleState.Collapsed,
+                            'schema',
+                            element.connectionId,
+                            schema
+                        )
+                    );
+                } else if (config.type === 'mysql') {
+                    const mysqlClient = client as any; // MySQLClient
+                    const tables = await mysqlClient.getTables();
+                    return tables.map((table: string) =>
+                        new DatabaseTreeItem(
+                            table,
+                            vscode.TreeItemCollapsibleState.None,
+                            'table',
+                            element.connectionId,
+                            undefined,
+                            undefined,
+                            table
+                        )
+                    );
+                } else if (config.type === 'redis') {
+                    return [
+                        new DatabaseTreeItem(
+                            'Keys',
+                            vscode.TreeItemCollapsibleState.Collapsed,
+                            'database',
+                            element.connectionId,
+                            undefined,
+                            'keys'
+                        )
+                    ];
+                } else if (config.type === 'mongodb') {
+                    return [
+                        new DatabaseTreeItem(
+                            config.database || 'default',
+                            vscode.TreeItemCollapsibleState.Collapsed,
+                            'database',
+                            element.connectionId,
+                            undefined,
+                            config.database
+                        )
+                    ];
+                }
+            } catch (error) {
+                vscode.window.showErrorMessage(`Failed to load schemas: ${error}`);
+                return [];
+            }
+        }
+
+        if (element.itemType === 'schema' && element.connectionId && element.schemaName) {
+            // Show tables in a PostgreSQL schema
+            try {
+                const client = this.databaseManager.getClient(element.connectionId);
+                if (!client) {
+                    return [];
+                }
+
+                const pgClient = client as any; // PostgresClient
+                const tables = await pgClient.getTables(element.schemaName);
+                return tables.map((table: string) =>
                     new DatabaseTreeItem(
-                        'Keys',
-                        vscode.TreeItemCollapsibleState.Collapsed,
-                        'database',
+                        table,
+                        vscode.TreeItemCollapsibleState.None,
+                        'table',
                         element.connectionId,
-                        'keys'
+                        element.schemaName,
+                        undefined,
+                        table
                     )
-                ];
-            } else if (config.type === 'mongodb') {
-                return [
-                    new DatabaseTreeItem(
-                        config.database || 'default',
-                        vscode.TreeItemCollapsibleState.Collapsed,
-                        'database',
-                        element.connectionId,
-                        config.database
-                    )
-                ];
-            } else {
-                // MySQL/PostgreSQL
-                return [
-                    new DatabaseTreeItem(
-                        'Tables',
-                        vscode.TreeItemCollapsibleState.Collapsed,
-                        'database',
-                        element.connectionId,
-                        'tables'
-                    )
-                ];
+                );
+            } catch (error) {
+                vscode.window.showErrorMessage(`Failed to load tables: ${error}`);
+                return [];
             }
         }
 
