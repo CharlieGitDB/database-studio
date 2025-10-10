@@ -239,6 +239,8 @@ export class DataViewerPanel {
             z-index: 1000;
             max-width: 600px;
             width: 90%;
+            max-height: 80vh;
+            overflow-y: auto;
         }
         .overlay {
             display: none;
