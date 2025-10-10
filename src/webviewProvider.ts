@@ -339,6 +339,7 @@ export class DataViewerPanel {
 <body>
     <h2>${resource || 'Query Results'}</h2>
 
+    ${dbType !== 'mongodb' && dbType !== 'redis' ? `
     <div class="query-container">
         <div class="query-editor-wrapper">
             <textarea
@@ -354,6 +355,7 @@ export class DataViewerPanel {
             <span class="query-hint">Ctrl+Enter to execute</span>
         </div>
     </div>
+    ` : ''}
 
     <div class="actions">
         ${!resource ? '' : '<button onclick="refresh()">Refresh</button>'}
@@ -396,26 +398,35 @@ export class DataViewerPanel {
         const dbType = '${dbType}';
         const schema = ${schema ? `'${schema}'` : 'undefined'};
         let currentEditRow = null;
+        let editor = null;
 
-        // Initialize CodeMirror
-        const editor = CodeMirror.fromTextArea(document.getElementById('sqlQuery'), {
-            mode: 'text/x-sql',
-            theme: 'monokai',
-            lineNumbers: true,
-            lineWrapping: true,
-            indentUnit: 4,
-            smartIndent: true,
-            extraKeys: {
-                'Ctrl-Enter': function(cm) {
-                    executeQuery();
-                },
-                'Cmd-Enter': function(cm) {
-                    executeQuery();
-                }
+        // Initialize CodeMirror only for SQL databases
+        if (dbType !== 'mongodb' && dbType !== 'redis') {
+            const sqlQueryElement = document.getElementById('sqlQuery');
+            if (sqlQueryElement) {
+                editor = CodeMirror.fromTextArea(sqlQueryElement, {
+                    mode: 'text/x-sql',
+                    theme: 'monokai',
+                    lineNumbers: true,
+                    lineWrapping: true,
+                    indentUnit: 4,
+                    smartIndent: true,
+                    extraKeys: {
+                        'Ctrl-Enter': function(cm) {
+                            executeQuery();
+                        },
+                        'Cmd-Enter': function(cm) {
+                            executeQuery();
+                        }
+                    }
+                });
             }
-        });
+        }
 
         function executeQuery() {
+            if (!editor) {
+                return;
+            }
             const query = editor.getValue().trim();
             if (!query) {
                 alert('Please enter a SQL query');
