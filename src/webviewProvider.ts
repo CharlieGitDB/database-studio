@@ -6,6 +6,7 @@ import { RedisClient } from './clients/redisClient';
 import { MySQLClient } from './clients/mysqlClient';
 import { PostgresClient } from './clients/postgresClient';
 import { MongoDBClient } from './clients/mongoClient';
+import { getMongoDBWebviewContent } from './mongoWebview';
 
 export class DataViewerPanel {
     public static currentPanel: DataViewerPanel | undefined;
@@ -36,6 +37,24 @@ export class DataViewerPanel {
                         break;
                     case 'executeQuery':
                         await this.executeQuery(message.connectionId, message.query, message.schema);
+                        break;
+                    case 'insertDocument':
+                        await this.insertDocument(message.connectionId, message.resource, message.document);
+                        break;
+                    case 'executeAggregate':
+                        await this.executeAggregate(message.connectionId, message.resource, message.pipeline);
+                        break;
+                    case 'getIndexes':
+                        await this.getIndexes(message.connectionId, message.resource);
+                        break;
+                    case 'createIndex':
+                        await this.createIndex(message.connectionId, message.resource, message.keys, message.options);
+                        break;
+                    case 'dropIndex':
+                        await this.dropIndex(message.connectionId, message.resource, message.indexName);
+                        break;
+                    case 'getDocument':
+                        await this.getDocument(message.connectionId, message.resource, message.id);
                         break;
                 }
             },
@@ -192,6 +211,9 @@ export class DataViewerPanel {
                 data = await client.executeQuery(query);
             } else if (client instanceof MySQLClient) {
                 data = await client.executeQuery(query);
+            } else if (client instanceof MongoDBClient) {
+                // For MongoDB, parse the query as JSON
+                data = await client.executeQuery(this.currentSchema || '', query);
             } else {
                 this.showError('Query execution not supported for this database type');
                 return;
@@ -204,12 +226,122 @@ export class DataViewerPanel {
         }
     }
 
+    private async insertDocument(connectionId: string, resource: string, document: any) {
+        try {
+            const client = this.databaseManager.getClient(connectionId);
+
+            if (!client || !(client instanceof MongoDBClient)) {
+                this.showError('Invalid client for MongoDB operation');
+                return;
+            }
+
+            const docObj = JSON.parse(document);
+            const insertedId = await client.insertDocument(resource, docObj);
+            vscode.window.showInformationMessage(`Document inserted with ID: ${insertedId}`);
+            await this.loadData(connectionId, resource, this.currentSchema);
+        } catch (error) {
+            this.showError(`Failed to insert document: ${error}`);
+        }
+    }
+
+    private async executeAggregate(connectionId: string, resource: string, pipeline: string) {
+        try {
+            const client = this.databaseManager.getClient(connectionId);
+            const config = this.connectionManager.getConnection(connectionId);
+
+            if (!client || !(client instanceof MongoDBClient) || !config) {
+                this.showError('Invalid client for MongoDB operation');
+                return;
+            }
+
+            const pipelineObj = JSON.parse(pipeline);
+            const data = await client.aggregate(resource, pipelineObj);
+            this._panel.webview.html = this.getWebviewContent(data, connectionId, resource, config.type, this.currentSchema, undefined);
+            vscode.window.showInformationMessage('Aggregation pipeline executed successfully');
+        } catch (error) {
+            this.showError(`Failed to execute aggregation: ${error}`);
+        }
+    }
+
+    private async getIndexes(connectionId: string, resource: string) {
+        try {
+            const client = this.databaseManager.getClient(connectionId);
+
+            if (!client || !(client instanceof MongoDBClient)) {
+                this.showError('Invalid client for MongoDB operation');
+                return;
+            }
+
+            const indexes = await client.getIndexes(resource);
+            this._panel.webview.postMessage({ command: 'showIndexes', indexes });
+        } catch (error) {
+            this.showError(`Failed to get indexes: ${error}`);
+        }
+    }
+
+    private async createIndex(connectionId: string, resource: string, keys: any, options: any) {
+        try {
+            const client = this.databaseManager.getClient(connectionId);
+
+            if (!client || !(client instanceof MongoDBClient)) {
+                this.showError('Invalid client for MongoDB operation');
+                return;
+            }
+
+            const keysObj = JSON.parse(keys);
+            const optionsObj = options ? JSON.parse(options) : undefined;
+            const indexName = await client.createIndex(resource, keysObj, optionsObj);
+            vscode.window.showInformationMessage(`Index created: ${indexName}`);
+            await this.getIndexes(connectionId, resource);
+        } catch (error) {
+            this.showError(`Failed to create index: ${error}`);
+        }
+    }
+
+    private async dropIndex(connectionId: string, resource: string, indexName: string) {
+        try {
+            const client = this.databaseManager.getClient(connectionId);
+
+            if (!client || !(client instanceof MongoDBClient)) {
+                this.showError('Invalid client for MongoDB operation');
+                return;
+            }
+
+            await client.dropIndex(resource, indexName);
+            vscode.window.showInformationMessage(`Index dropped: ${indexName}`);
+            await this.getIndexes(connectionId, resource);
+        } catch (error) {
+            this.showError(`Failed to drop index: ${error}`);
+        }
+    }
+
+    private async getDocument(connectionId: string, resource: string, id: string) {
+        try {
+            const client = this.databaseManager.getClient(connectionId);
+
+            if (!client || !(client instanceof MongoDBClient)) {
+                this.showError('Invalid client for MongoDB operation');
+                return;
+            }
+
+            const document = await client.getDocumentById(resource, id);
+            this._panel.webview.postMessage({ command: 'showDocument', document });
+        } catch (error) {
+            this.showError(`Failed to get document: ${error}`);
+        }
+    }
+
     private showError(message: string) {
         vscode.window.showErrorMessage(message);
         this._panel.webview.html = `<html><body><h2>Error</h2><p>${message}</p></body></html>`;
     }
 
     private getWebviewContent(data: QueryResult, connectionId: string, resource: string, dbType: string, schema?: string, previousQuery?: string): string {
+        // Use MongoDB-specific UI for MongoDB databases
+        if (dbType === 'mongodb' && resource) {
+            return getMongoDBWebviewContent(data, connectionId, resource, schema);
+        }
+
         const rows = data.rows.map(row => {
             return data.columns.map((col, idx) => {
                 const value = row[idx];

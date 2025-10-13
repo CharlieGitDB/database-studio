@@ -127,6 +127,87 @@ export class MongoDBClient {
         return { columns, rows };
     }
 
+    async insertDocument(collectionName: string, document: Record<string, any>): Promise<string> {
+        if (!this.db) {
+            throw new Error('Not connected');
+        }
+
+        const collection = this.db.collection(collectionName);
+        const result = await collection.insertOne(document);
+        return result.insertedId.toString();
+    }
+
+    async aggregate(collectionName: string, pipeline: any[]): Promise<QueryResult> {
+        if (!this.db) {
+            throw new Error('Not connected');
+        }
+
+        const collection = this.db.collection(collectionName);
+        const documents = await collection.aggregate(pipeline).toArray();
+
+        if (documents.length === 0) {
+            return { columns: [], rows: [] };
+        }
+
+        const allKeys = new Set<string>();
+        documents.forEach(doc => {
+            Object.keys(doc).forEach(key => allKeys.add(key));
+        });
+
+        const columns = Array.from(allKeys);
+
+        const rows = documents.map(doc => {
+            return columns.map(col => {
+                const value = doc[col];
+                if (value instanceof ObjectId) {
+                    return value.toString();
+                }
+                if (typeof value === 'object' && value !== null) {
+                    return JSON.stringify(value);
+                }
+                return value;
+            });
+        });
+
+        return { columns, rows };
+    }
+
+    async getIndexes(collectionName: string): Promise<any[]> {
+        if (!this.db) {
+            throw new Error('Not connected');
+        }
+
+        const collection = this.db.collection(collectionName);
+        return await collection.indexes();
+    }
+
+    async createIndex(collectionName: string, keys: Record<string, any>, options?: any): Promise<string> {
+        if (!this.db) {
+            throw new Error('Not connected');
+        }
+
+        const collection = this.db.collection(collectionName);
+        return await collection.createIndex(keys, options);
+    }
+
+    async dropIndex(collectionName: string, indexName: string): Promise<void> {
+        if (!this.db) {
+            throw new Error('Not connected');
+        }
+
+        const collection = this.db.collection(collectionName);
+        await collection.dropIndex(indexName);
+    }
+
+    async getDocumentById(collectionName: string, id: string): Promise<any> {
+        if (!this.db) {
+            throw new Error('Not connected');
+        }
+
+        const collection = this.db.collection(collectionName);
+        return await collection.findOne({ _id: new ObjectId(id) });
+    }
+
     isConnected(): boolean {
         return this.client !== null && this.db !== null;
     }
