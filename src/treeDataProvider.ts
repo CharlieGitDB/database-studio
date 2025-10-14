@@ -147,16 +147,34 @@ export class DatabaseTreeDataProvider implements vscode.TreeDataProvider<Databas
                         )
                     ];
                 } else if (config.type === 'mongodb') {
-                    return [
-                        new DatabaseTreeItem(
-                            config.database || 'default',
-                            vscode.TreeItemCollapsibleState.Collapsed,
-                            'database',
-                            element.connectionId,
-                            undefined,
-                            config.database
-                        )
-                    ];
+                    const mongoClient = client as any; // MongoDBClient
+
+                    // If no specific database was configured, list all databases
+                    if (!config.database) {
+                        const databases = await mongoClient.getDatabases();
+                        return databases.map((dbName: string) =>
+                            new DatabaseTreeItem(
+                                dbName,
+                                vscode.TreeItemCollapsibleState.Collapsed,
+                                'database',
+                                element.connectionId,
+                                undefined,
+                                dbName
+                            )
+                        );
+                    } else {
+                        // Show the single configured database
+                        return [
+                            new DatabaseTreeItem(
+                                config.database,
+                                vscode.TreeItemCollapsibleState.Collapsed,
+                                'database',
+                                element.connectionId,
+                                undefined,
+                                config.database
+                            )
+                        ];
+                    }
                 }
             } catch (error) {
                 vscode.window.showErrorMessage(`Failed to load schemas: ${error}`);
@@ -222,7 +240,8 @@ export class DatabaseTreeDataProvider implements vscode.TreeDataProvider<Databas
                     );
                 } else if (config.type === 'mongodb') {
                     const mongoClient = client as any; // MongoDBClient
-                    const collections = await mongoClient.getCollections();
+                    // Pass the database name to get collections from that specific database
+                    const collections = await mongoClient.getCollections(element.databaseName);
                     return collections.map((collection: string) =>
                         new DatabaseTreeItem(
                             collection,

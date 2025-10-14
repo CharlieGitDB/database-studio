@@ -316,7 +316,8 @@ export function activate(context: vscode.ExtensionContext) {
                     resource = selected;
                 } else if (item.tableName) {
                     resource = item.tableName;
-                    schema = item.schemaName; // Capture schema name for PostgreSQL tables
+                    // Capture schema name for PostgreSQL tables or database name for MongoDB collections
+                    schema = item.schemaName || item.databaseName;
                 } else {
                     vscode.window.showErrorMessage('Invalid selection');
                     return;

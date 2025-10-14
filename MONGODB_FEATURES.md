@@ -23,8 +23,56 @@ The main view for browsing and managing your MongoDB documents.
 - The `_id` field is automatically handled and cannot be changed
 - Complex nested objects and arrays are fully supported
 
-### 2. **Query Builder Tab** 🔍
-Execute MongoDB queries using native MongoDB query syntax.
+### 2. **Visual Query Builder Tab** 🎨
+Build queries visually through a step-by-step wizard interface - no coding required!
+
+#### Features:
+- **Step 1: Select Fields** - Choose which fields to include in results
+  - Visual checkboxes for all fields
+  - "Select All" and "Deselect All" quick actions
+  - Live preview of selected fields
+  - Leave all unchecked to return all fields
+
+- **Step 2: Add Filters** - Build complex query conditions
+  - Dynamic filter rows with field, operator, value, and type
+  - Choose between AND/OR logic for combining conditions
+  - Support for 10+ comparison operators
+  - Real-time query preview
+  - Add/remove filters with ease
+
+- **Step 3: Options & Execute** - Configure and run your query
+  - Sort options (field and order)
+  - Limit results (1-1000 documents)
+  - Skip documents for pagination
+  - Final query preview showing all details
+  - Execute or reset the wizard
+
+#### Supported Operators:
+- **Comparison**: `=` (equals), `!=` (not equals), `>`, `>=`, `<`, `<=`
+- **Array**: `IN` (in array), `NOT IN` (not in array)
+- **Pattern**: `REGEX` (pattern match)
+- **Existence**: `EXISTS` (field exists)
+
+#### Data Types:
+- **String**: Text values
+- **Number**: Numeric values (integers and floats)
+- **Boolean**: true/false values
+- **Array**: JSON arrays like `[1, 2, 3]`
+
+#### Step Indicator:
+- Visual progress indicator showing current step
+- Completed steps marked with checkmark
+- Navigate forward and backward through steps
+- Reset wizard to start over
+
+#### Example Workflow:
+1. **Step 1**: Select fields `name`, `email`, `age`
+2. **Step 2**: Add filter `age > 25` (AND) `status = active`
+3. **Step 3**: Sort by `createdAt` descending, limit 50
+4. **Execute**: Results shown in main table
+
+### 3. **Advanced Query Builder Tab** 🔍
+Execute MongoDB queries using native MongoDB query syntax (for advanced users).
 
 #### Features:
 - **JSON Query Editor**: Write queries using MongoDB's query syntax
@@ -57,7 +105,7 @@ Execute MongoDB queries using native MongoDB query syntax.
 - Evaluation: `$regex`, `$text`, `$where`
 - Array: `$all`, `$elemMatch`, `$size`
 
-### 3. **Aggregation Pipeline Tab** 📊
+### 4. **Aggregation Pipeline Tab** 📊
 Execute powerful aggregation pipelines for data analysis.
 
 #### Features:
@@ -103,7 +151,7 @@ Execute powerful aggregation pipelines for data analysis.
 - `$bucket`, `$bucketAuto`, `$sortByCount`
 - `$addFields`, `$count`, `$sample`
 
-### 4. **Indexes Tab** 📇
+### 5. **Indexes Tab** 📇
 Manage indexes for optimal query performance.
 
 #### Features:

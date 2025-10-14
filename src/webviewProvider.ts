@@ -13,13 +13,16 @@ export class DataViewerPanel {
     private readonly _panel: vscode.WebviewPanel;
     private _disposables: vscode.Disposable[] = [];
     private currentSchema?: string;
+    private extensionUri: vscode.Uri;
 
     private constructor(
         panel: vscode.WebviewPanel,
+        extensionUri: vscode.Uri,
         private readonly databaseManager: DatabaseManager,
         private readonly connectionManager: ConnectionManager
     ) {
         this._panel = panel;
+        this.extensionUri = extensionUri;
 
         this._panel.onDidDispose(() => this.dispose(), null, this._disposables);
 
@@ -87,11 +90,15 @@ export class DataViewerPanel {
             column || vscode.ViewColumn.One,
             {
                 enableScripts: true,
-                localResourceRoots: [extensionUri]
+                retainContextWhenHidden: true,
+                localResourceRoots: [
+                    vscode.Uri.joinPath(extensionUri, 'src', 'webviews'),
+                    extensionUri
+                ]
             }
         );
 
-        DataViewerPanel.currentPanel = new DataViewerPanel(panel, databaseManager, connectionManager);
+        DataViewerPanel.currentPanel = new DataViewerPanel(panel, extensionUri, databaseManager, connectionManager);
         DataViewerPanel.currentPanel.loadData(connectionId, resource, schema);
     }
 
@@ -125,7 +132,7 @@ export class DataViewerPanel {
             } else if (client instanceof PostgresClient) {
                 data = await client.getTableData(resource, schema);
             } else if (client instanceof MongoDBClient) {
-                data = await client.getCollectionData(resource);
+                data = await client.getCollectionData(resource, schema);
             } else {
                 this.showError('Unsupported database type');
                 return;
@@ -154,7 +161,7 @@ export class DataViewerPanel {
             } else if (client instanceof PostgresClient) {
                 await client.updateRecord(resource, data.primaryKey, data.primaryKeyValue, data.updates, schema);
             } else if (client instanceof MongoDBClient) {
-                await client.updateDocument(resource, data.id, data.updates);
+                await client.updateDocument(resource, data.id, data.updates, schema);
             }
 
             vscode.window.showInformationMessage('Record updated successfully');
@@ -181,7 +188,7 @@ export class DataViewerPanel {
             } else if (client instanceof PostgresClient) {
                 await client.deleteRecord(resource, data.primaryKey, data.primaryKeyValue, schema);
             } else if (client instanceof MongoDBClient) {
-                await client.deleteDocument(resource, data.id);
+                await client.deleteDocument(resource, data.id, schema);
             }
 
             vscode.window.showInformationMessage('Record deleted successfully');
@@ -213,7 +220,7 @@ export class DataViewerPanel {
                 data = await client.executeQuery(query);
             } else if (client instanceof MongoDBClient) {
                 // For MongoDB, parse the query as JSON
-                data = await client.executeQuery(this.currentSchema || '', query);
+                data = await client.executeQuery(schema || this.currentSchema || '', query, schema);
             } else {
                 this.showError('Query execution not supported for this database type');
                 return;
@@ -236,7 +243,7 @@ export class DataViewerPanel {
             }
 
             const docObj = JSON.parse(document);
-            const insertedId = await client.insertDocument(resource, docObj);
+            const insertedId = await client.insertDocument(resource, docObj, this.currentSchema);
             vscode.window.showInformationMessage(`Document inserted with ID: ${insertedId}`);
             await this.loadData(connectionId, resource, this.currentSchema);
         } catch (error) {
@@ -255,7 +262,7 @@ export class DataViewerPanel {
             }
 
             const pipelineObj = JSON.parse(pipeline);
-            const data = await client.aggregate(resource, pipelineObj);
+            const data = await client.aggregate(resource, pipelineObj, this.currentSchema);
             this._panel.webview.html = this.getWebviewContent(data, connectionId, resource, config.type, this.currentSchema, undefined);
             vscode.window.showInformationMessage('Aggregation pipeline executed successfully');
         } catch (error) {
@@ -272,7 +279,7 @@ export class DataViewerPanel {
                 return;
             }
 
-            const indexes = await client.getIndexes(resource);
+            const indexes = await client.getIndexes(resource, this.currentSchema);
             this._panel.webview.postMessage({ command: 'showIndexes', indexes });
         } catch (error) {
             this.showError(`Failed to get indexes: ${error}`);
@@ -290,7 +297,7 @@ export class DataViewerPanel {
 
             const keysObj = JSON.parse(keys);
             const optionsObj = options ? JSON.parse(options) : undefined;
-            const indexName = await client.createIndex(resource, keysObj, optionsObj);
+            const indexName = await client.createIndex(resource, keysObj, optionsObj, this.currentSchema);
             vscode.window.showInformationMessage(`Index created: ${indexName}`);
             await this.getIndexes(connectionId, resource);
         } catch (error) {
@@ -307,7 +314,7 @@ export class DataViewerPanel {
                 return;
             }
 
-            await client.dropIndex(resource, indexName);
+            await client.dropIndex(resource, indexName, this.currentSchema);
             vscode.window.showInformationMessage(`Index dropped: ${indexName}`);
             await this.getIndexes(connectionId, resource);
         } catch (error) {
@@ -324,7 +331,7 @@ export class DataViewerPanel {
                 return;
             }
 
-            const document = await client.getDocumentById(resource, id);
+            const document = await client.getDocumentById(resource, id, this.currentSchema);
             this._panel.webview.postMessage({ command: 'showDocument', document });
         } catch (error) {
             this.showError(`Failed to get document: ${error}`);
@@ -339,7 +346,7 @@ export class DataViewerPanel {
     private getWebviewContent(data: QueryResult, connectionId: string, resource: string, dbType: string, schema?: string, previousQuery?: string): string {
         // Use MongoDB-specific UI for MongoDB databases
         if (dbType === 'mongodb' && resource) {
-            return getMongoDBWebviewContent(data, connectionId, resource, schema);
+            return getMongoDBWebviewContent(this.extensionUri, this._panel.webview, data, connectionId, resource, schema);
         }
 
         const rows = data.rows.map(row => {

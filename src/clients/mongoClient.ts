@@ -12,7 +12,11 @@ export class MongoDBClient {
 
         this.client = new MongoClient(uri);
         await this.client.connect();
-        this.db = this.client.db(config.database || 'test');
+
+        // Only set db if a specific database was provided
+        if (config.database) {
+            this.db = this.client.db(config.database);
+        }
     }
 
     async disconnect(): Promise<void> {
@@ -23,21 +27,43 @@ export class MongoDBClient {
         }
     }
 
-    async getCollections(): Promise<string[]> {
-        if (!this.db) {
+    async getDatabases(): Promise<string[]> {
+        if (!this.client) {
             throw new Error('Not connected');
         }
 
-        const collections = await this.db.listCollections().toArray();
+        const adminDb = this.client.db('admin');
+        const result = await adminDb.admin().listDatabases();
+        return result.databases.map(db => db.name);
+    }
+
+    async getCollections(databaseName?: string): Promise<string[]> {
+        if (!this.client) {
+            throw new Error('Not connected');
+        }
+
+        // If a database name is provided, use it; otherwise use the default db
+        const targetDb = databaseName ? this.client.db(databaseName) : this.db;
+
+        if (!targetDb) {
+            throw new Error('No database specified');
+        }
+
+        const collections = await targetDb.listCollections().toArray();
         return collections.map(col => col.name);
     }
 
-    async getCollectionData(collectionName: string, limit: number = 100): Promise<QueryResult> {
-        if (!this.db) {
+    async getCollectionData(collectionName: string, databaseName?: string, limit: number = 100): Promise<QueryResult> {
+        if (!this.client) {
             throw new Error('Not connected');
         }
 
-        const collection = this.db.collection(collectionName);
+        const targetDb = databaseName ? this.client.db(databaseName) : this.db;
+        if (!targetDb) {
+            throw new Error('No database specified');
+        }
+
+        const collection = targetDb.collection(collectionName);
         const documents = await collection.find({}).limit(limit).toArray();
 
         if (documents.length === 0) {
@@ -68,12 +94,17 @@ export class MongoDBClient {
         return { columns, rows };
     }
 
-    async updateDocument(collectionName: string, id: string, updates: Record<string, any>): Promise<void> {
-        if (!this.db) {
+    async updateDocument(collectionName: string, id: string, updates: Record<string, any>, databaseName?: string): Promise<void> {
+        if (!this.client) {
             throw new Error('Not connected');
         }
 
-        const collection = this.db.collection(collectionName);
+        const targetDb = databaseName ? this.client.db(databaseName) : this.db;
+        if (!targetDb) {
+            throw new Error('No database specified');
+        }
+
+        const collection = targetDb.collection(collectionName);
         const { _id, ...updateFields } = updates;
 
         await collection.updateOne(
@@ -82,21 +113,31 @@ export class MongoDBClient {
         );
     }
 
-    async deleteDocument(collectionName: string, id: string): Promise<void> {
-        if (!this.db) {
+    async deleteDocument(collectionName: string, id: string, databaseName?: string): Promise<void> {
+        if (!this.client) {
             throw new Error('Not connected');
         }
 
-        const collection = this.db.collection(collectionName);
+        const targetDb = databaseName ? this.client.db(databaseName) : this.db;
+        if (!targetDb) {
+            throw new Error('No database specified');
+        }
+
+        const collection = targetDb.collection(collectionName);
         await collection.deleteOne({ _id: new ObjectId(id) });
     }
 
-    async executeQuery(collectionName: string, query: string): Promise<QueryResult> {
-        if (!this.db) {
+    async executeQuery(collectionName: string, query: string, databaseName?: string): Promise<QueryResult> {
+        if (!this.client) {
             throw new Error('Not connected');
         }
 
-        const collection = this.db.collection(collectionName);
+        const targetDb = databaseName ? this.client.db(databaseName) : this.db;
+        if (!targetDb) {
+            throw new Error('No database specified');
+        }
+
+        const collection = targetDb.collection(collectionName);
         const queryObj = JSON.parse(query);
         const documents = await collection.find(queryObj).limit(100).toArray();
 
@@ -127,22 +168,32 @@ export class MongoDBClient {
         return { columns, rows };
     }
 
-    async insertDocument(collectionName: string, document: Record<string, any>): Promise<string> {
-        if (!this.db) {
+    async insertDocument(collectionName: string, document: Record<string, any>, databaseName?: string): Promise<string> {
+        if (!this.client) {
             throw new Error('Not connected');
         }
 
-        const collection = this.db.collection(collectionName);
+        const targetDb = databaseName ? this.client.db(databaseName) : this.db;
+        if (!targetDb) {
+            throw new Error('No database specified');
+        }
+
+        const collection = targetDb.collection(collectionName);
         const result = await collection.insertOne(document);
         return result.insertedId.toString();
     }
 
-    async aggregate(collectionName: string, pipeline: any[]): Promise<QueryResult> {
-        if (!this.db) {
+    async aggregate(collectionName: string, pipeline: any[], databaseName?: string): Promise<QueryResult> {
+        if (!this.client) {
             throw new Error('Not connected');
         }
 
-        const collection = this.db.collection(collectionName);
+        const targetDb = databaseName ? this.client.db(databaseName) : this.db;
+        if (!targetDb) {
+            throw new Error('No database specified');
+        }
+
+        const collection = targetDb.collection(collectionName);
         const documents = await collection.aggregate(pipeline).toArray();
 
         if (documents.length === 0) {
@@ -172,43 +223,63 @@ export class MongoDBClient {
         return { columns, rows };
     }
 
-    async getIndexes(collectionName: string): Promise<any[]> {
-        if (!this.db) {
+    async getIndexes(collectionName: string, databaseName?: string): Promise<any[]> {
+        if (!this.client) {
             throw new Error('Not connected');
         }
 
-        const collection = this.db.collection(collectionName);
+        const targetDb = databaseName ? this.client.db(databaseName) : this.db;
+        if (!targetDb) {
+            throw new Error('No database specified');
+        }
+
+        const collection = targetDb.collection(collectionName);
         return await collection.indexes();
     }
 
-    async createIndex(collectionName: string, keys: Record<string, any>, options?: any): Promise<string> {
-        if (!this.db) {
+    async createIndex(collectionName: string, keys: Record<string, any>, options?: any, databaseName?: string): Promise<string> {
+        if (!this.client) {
             throw new Error('Not connected');
         }
 
-        const collection = this.db.collection(collectionName);
+        const targetDb = databaseName ? this.client.db(databaseName) : this.db;
+        if (!targetDb) {
+            throw new Error('No database specified');
+        }
+
+        const collection = targetDb.collection(collectionName);
         return await collection.createIndex(keys, options);
     }
 
-    async dropIndex(collectionName: string, indexName: string): Promise<void> {
-        if (!this.db) {
+    async dropIndex(collectionName: string, indexName: string, databaseName?: string): Promise<void> {
+        if (!this.client) {
             throw new Error('Not connected');
         }
 
-        const collection = this.db.collection(collectionName);
+        const targetDb = databaseName ? this.client.db(databaseName) : this.db;
+        if (!targetDb) {
+            throw new Error('No database specified');
+        }
+
+        const collection = targetDb.collection(collectionName);
         await collection.dropIndex(indexName);
     }
 
-    async getDocumentById(collectionName: string, id: string): Promise<any> {
-        if (!this.db) {
+    async getDocumentById(collectionName: string, id: string, databaseName?: string): Promise<any> {
+        if (!this.client) {
             throw new Error('Not connected');
         }
 
-        const collection = this.db.collection(collectionName);
+        const targetDb = databaseName ? this.client.db(databaseName) : this.db;
+        if (!targetDb) {
+            throw new Error('No database specified');
+        }
+
+        const collection = targetDb.collection(collectionName);
         return await collection.findOne({ _id: new ObjectId(id) });
     }
 
     isConnected(): boolean {
-        return this.client !== null && this.db !== null;
+        return this.client !== null;
     }
 }
