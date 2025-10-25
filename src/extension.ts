@@ -16,6 +16,35 @@ export function activate(context: vscode.ExtensionContext) {
         treeDataProvider
     });
 
+    // Auto-connect when expanding a tree item
+    treeView.onDidExpandElement(async (event) => {
+        const item = event.element;
+
+        // Check if this is a connection item that needs to be connected
+        if (item.itemType === 'connection' && item.connectionId && !item.isConnected) {
+            try {
+                const config = connectionManager.getConnection(item.connectionId);
+                if (!config) {
+                    vscode.window.showErrorMessage('Connection not found');
+                    return;
+                }
+
+                // Connect to the database
+                await databaseManager.connect(config);
+                treeDataProvider.setConnectionStatus(item.connectionId, true);
+                vscode.window.showInformationMessage(`Connected to ${config.name}`);
+
+                // The setConnectionStatus call above triggers refresh() which will reload the tree
+                // and show the newly connected item with its children
+            } catch (error) {
+                console.error('Auto-connect error:', error);
+                vscode.window.showErrorMessage(`Failed to connect: ${error}`);
+                // Refresh to show disconnected state
+                treeDataProvider.refresh();
+            }
+        }
+    });
+
     context.subscriptions.push(treeView);
 
     // Add connection command

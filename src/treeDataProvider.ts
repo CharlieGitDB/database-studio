@@ -95,6 +95,7 @@ export class DatabaseTreeDataProvider implements vscode.TreeDataProvider<Databas
                 return [];
             }
 
+            // If not connected, return empty array - the expansion event handler will connect
             if (!this.isConnected(element.connectionId)) {
                 console.log('Connection not marked as connected:', element.connectionId);
                 return [];
