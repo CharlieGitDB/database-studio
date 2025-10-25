@@ -42,4 +42,8 @@ export class ConnectionManager {
     getAllConnections(): ConnectionConfig[] {
         return Array.from(this.connections.values());
     }
+
+    getContext(): vscode.ExtensionContext {
+        return this.context;
+    }
 }

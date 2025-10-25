@@ -123,7 +123,8 @@
   "scripts": {
     "vscode:prepublish": "npm run compile",
     "clean": "node -e \"require('fs').rmSync('out', {recursive:true, force:true})\"",
-    "compile": "npm run clean && tsc -p ./",
+    "copy-webviews": "node -e \"const fs=require('fs'),path=require('path'); const src='src/webviews', dest='out/webviews'; fs.mkdirSync(dest,{recursive:true}); fs.readdirSync(src).forEach(f=>{if(f.endsWith('.html')||f.endsWith('.js'))fs.copyFileSync(path.join(src,f),path.join(dest,f))})\"",
+    "compile": "npm run clean && tsc -p ./ && npm run copy-webviews",
     "watch": "tsc -watch -p ./",
     "pretest": "npm run compile && npm run lint",
     "lint": "eslint src --ext ts",

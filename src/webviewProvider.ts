@@ -1,12 +1,13 @@
 import * as vscode from 'vscode';
 import { DatabaseManager } from './databaseManager';
 import { ConnectionManager } from './connectionManager';
-import { QueryResult } from './types';
+import { QueryResult, ColumnInfo, QueryBuilderState, SavedQuery } from './types';
 import { RedisClient } from './clients/redisClient';
 import { MySQLClient } from './clients/mysqlClient';
 import { PostgresClient } from './clients/postgresClient';
 import { MongoDBClient } from './clients/mongoClient';
 import { getMongoDBWebviewContent } from './mongoWebview';
+import { QueryBuilder } from './queryBuilder';
 
 export class DataViewerPanel {
     public static currentPanel: DataViewerPanel | undefined;
@@ -58,6 +59,24 @@ export class DataViewerPanel {
                         break;
                     case 'getDocument':
                         await this.getDocument(message.connectionId, message.resource, message.id);
+                        break;
+                    case 'getColumns':
+                        await this.getColumns(message.connectionId, message.resource, message.schema);
+                        break;
+                    case 'getTables':
+                        await this.getTables(message.connectionId, message.schema);
+                        break;
+                    case 'generateSQL':
+                        await this.generateSQL(message.builderState, message.dbType);
+                        break;
+                    case 'saveQuery':
+                        await this.saveQuery(message.query);
+                        break;
+                    case 'loadQuery':
+                        await this.loadQuery(message.queryId);
+                        break;
+                    case 'getSavedQueries':
+                        await this.getSavedQueries();
                         break;
                 }
             },
@@ -232,7 +251,13 @@ export class DataViewerPanel {
                 return;
             }
 
-            this._panel.webview.html = this.getWebviewContent(data, connectionId, '', config.type, schema, query);
+            // Instead of replacing HTML, send results via message to preserve the UI
+            this._panel.webview.postMessage({
+                command: 'queryResults',
+                columns: data.columns,
+                rows: data.rows,
+                rowCount: data.rows.length
+            });
             vscode.window.showInformationMessage('Query executed successfully');
         } catch (error) {
             this.showError(`Failed to execute query: ${error}`);
@@ -344,9 +369,715 @@ export class DataViewerPanel {
         }
     }
 
+    private async getColumns(connectionId: string, resource: string, schema?: string) {
+        try {
+            const client = this.databaseManager.getClient(connectionId);
+
+            if (!client) {
+                this.showError('Connection not found');
+                return;
+            }
+
+            let columns: ColumnInfo[] = [];
+
+            if (client instanceof PostgresClient) {
+                columns = await client.getColumns(resource, schema || 'public');
+            } else if (client instanceof MySQLClient) {
+                columns = await client.getColumns(resource);
+            } else {
+                this.showError('Column introspection not supported for this database type');
+                return;
+            }
+
+            this._panel.webview.postMessage({ command: 'columnsData', columns });
+        } catch (error) {
+            this.showError(`Failed to get columns: ${error}`);
+        }
+    }
+
+    private async getTables(connectionId: string, schema?: string) {
+        try {
+            const client = this.databaseManager.getClient(connectionId);
+
+            if (!client) {
+                this.showError('Connection not found');
+                return;
+            }
+
+            let tables: string[] = [];
+
+            if (client instanceof PostgresClient) {
+                tables = await client.getTables(schema || 'public');
+            } else if (client instanceof MySQLClient) {
+                tables = await client.getTables();
+            } else {
+                this.showError('Table listing not supported for this database type');
+                return;
+            }
+
+            this._panel.webview.postMessage({ command: 'tablesData', tables });
+        } catch (error) {
+            this.showError(`Failed to get tables: ${error}`);
+        }
+    }
+
+    private async generateSQL(builderState: QueryBuilderState, dbType: 'mysql' | 'postgresql') {
+        try {
+            const sql = QueryBuilder.generateSQL(builderState, dbType);
+            const validation = QueryBuilder.validate(builderState);
+
+            this._panel.webview.postMessage({
+                command: 'generatedSQL',
+                sql,
+                validation
+            });
+        } catch (error) {
+            this.showError(`Failed to generate SQL: ${error}`);
+        }
+    }
+
+    private async saveQuery(query: SavedQuery) {
+        try {
+            // Get existing saved queries from global state
+            const context = this.connectionManager.getContext();
+            const savedQueries = context.globalState.get<SavedQuery[]>('savedQueries', []);
+
+            // Add or update the query
+            const existingIndex = savedQueries.findIndex(q => q.id === query.id);
+            if (existingIndex >= 0) {
+                savedQueries[existingIndex] = { ...query, updatedAt: Date.now() };
+            } else {
+                savedQueries.push({ ...query, createdAt: Date.now(), updatedAt: Date.now() });
+            }
+
+            await context.globalState.update('savedQueries', savedQueries);
+            vscode.window.showInformationMessage('Query saved successfully');
+
+            // Send updated list back to webview
+            this._panel.webview.postMessage({ command: 'savedQueriesList', queries: savedQueries });
+        } catch (error) {
+            this.showError(`Failed to save query: ${error}`);
+        }
+    }
+
+    private async loadQuery(queryId: string) {
+        try {
+            const context = this.connectionManager.getContext();
+            const savedQueries = context.globalState.get<SavedQuery[]>('savedQueries', []);
+            const query = savedQueries.find(q => q.id === queryId);
+
+            if (query) {
+                this._panel.webview.postMessage({ command: 'loadedQuery', query });
+            } else {
+                this.showError('Query not found');
+            }
+        } catch (error) {
+            this.showError(`Failed to load query: ${error}`);
+        }
+    }
+
+    private async getSavedQueries() {
+        try {
+            const context = this.connectionManager.getContext();
+            const savedQueries = context.globalState.get<SavedQuery[]>('savedQueries', []);
+            this._panel.webview.postMessage({ command: 'savedQueriesList', queries: savedQueries });
+        } catch (error) {
+            this.showError(`Failed to get saved queries: ${error}`);
+        }
+    }
+
     private showError(message: string) {
         vscode.window.showErrorMessage(message);
         this._panel.webview.html = `<html><body><h2>Error</h2><p>${message}</p></body></html>`;
+    }
+
+    private getQueryBuilderJSInline(): string {
+        // Query Builder JavaScript - inlined for reliability
+        return `
+// Query Builder JavaScript Logic
+let queryBuilderState = {
+    table: '',
+    schema: undefined,
+    distinct: false,
+    selectColumns: [],
+    filters: [],
+    joins: [],
+    orderBy: [],
+    groupBy: [],
+    limit: undefined,
+    offset: undefined
+};
+
+let columnsData = [];
+let relatedTablesData = [];
+
+// Tab switching
+function switchTab(tabName) {
+    document.querySelectorAll('.tab-content').forEach(tab => {
+        tab.classList.remove('active');
+    });
+    document.querySelectorAll('.tab').forEach(tab => {
+        tab.classList.remove('active');
+    });
+
+    const tabContent = document.getElementById(tabName + 'Tab');
+    const tabButton = document.querySelector(\`[data-tab="\${tabName}"]\`);
+
+    if (tabContent) tabContent.classList.add('active');
+    if (tabButton) tabButton.classList.add('active');
+
+    if (tabName === 'queryBuilder' && resource && columnsData.length === 0) {
+        vscode.postMessage({
+            command: 'getColumns',
+            connectionId,
+            resource,
+            schema
+        });
+    }
+}
+
+function initializeQueryBuilder(tableName, schemaName) {
+    queryBuilderState.table = tableName;
+    queryBuilderState.schema = schemaName;
+
+    if (schemaName) {
+        document.getElementById('builderSchemaInfo').style.display = 'block';
+        document.getElementById('builderSchemaName').textContent = schemaName;
+    }
+
+    // Request list of tables
+    vscode.postMessage({
+        command: 'getTables',
+        connectionId,
+        schema: schemaName
+    });
+
+    vscode.postMessage({ command: 'getSavedQueries' });
+}
+
+function renderTables(tables, currentTable) {
+    const tableSelector = document.getElementById('tableSelector');
+
+    if (!tableSelector) {
+        console.error('Table selector element not found');
+        return;
+    }
+
+    if (!tables || tables.length === 0) {
+        tableSelector.innerHTML = '<option value="">No tables found</option>';
+        return;
+    }
+
+    console.log('Rendering tables:', tables, 'Current table:', currentTable);
+    tableSelector.innerHTML = tables.map(table =>
+        \`<option value="\${table}" \${table === currentTable ? 'selected' : ''}>\${table}</option>\`
+    ).join('');
+}
+
+function changeTable() {
+    const tableSelector = document.getElementById('tableSelector');
+    const newTable = tableSelector.value;
+
+    if (!newTable || newTable === queryBuilderState.table) {
+        return;
+    }
+
+    // Reset the entire query builder state
+    queryBuilderState = {
+        table: newTable,
+        schema: queryBuilderState.schema,
+        distinct: false,
+        selectColumns: [],
+        filters: [],
+        joins: [],
+        orderBy: [],
+        groupBy: [],
+        limit: undefined,
+        offset: undefined
+    };
+
+    // Clear all UI
+    columnsData = [];
+    relatedTablesData = [];
+    document.getElementById('columnsList').innerHTML = '<p class="empty-state">Loading columns...</p>';
+    document.getElementById('filtersList').innerHTML = '<p class="empty-state">No filters added. Click "+ Add Filter" to add conditions.</p>';
+    document.getElementById('joinsList').innerHTML = '<p class="empty-state">No joins added. Click "+ Add Join" to join related tables.</p>';
+    document.getElementById('orderByList').innerHTML = '<p class="empty-state">No sorting applied. Click "+ Add Sort" to order results.</p>';
+    document.getElementById('sqlPreview').textContent = '';
+    document.getElementById('distinctCheck').checked = false;
+    document.getElementById('limitInput').value = '';
+    document.getElementById('offsetInput').value = '0';
+
+    // Request columns for the new table
+    vscode.postMessage({
+        command: 'getColumns',
+        connectionId,
+        resource: newTable,
+        schema: queryBuilderState.schema
+    });
+}
+
+function renderColumns(columns) {
+    columnsData = columns;
+    const columnsList = document.getElementById('columnsList');
+
+    if (!columns || columns.length === 0) {
+        columnsList.innerHTML = '<p class="empty-state">No columns found.</p>';
+        return;
+    }
+
+    relatedTablesData = columns
+        .filter(col => col.isForeignKey)
+        .map(col => col.referencedTable)
+        .filter((table, index, self) => self.indexOf(table) === index);
+
+    if (relatedTablesData.length > 0) {
+        document.getElementById('relatedTables').style.display = 'block';
+        document.getElementById('relatedTablesList').textContent = relatedTablesData.join(', ');
+    }
+
+    columnsList.innerHTML = columns.map((col, index) => \`
+        <div class="column-item">
+            <input type="checkbox" id="col_\${index}" onchange="toggleColumn(\${index})">
+            <div class="column-info">
+                <div class="column-name">
+                    \${col.name}
+                    \${col.isPrimaryKey ? '<span class="column-badge">PK</span>' : ''}
+                    \${col.isForeignKey ? \`<span class="column-badge" title="References \${col.referencedTable}.\${col.referencedColumn}">FK</span>\` : ''}
+                </div>
+                <div class="column-type">\${col.type}\${col.nullable ? ', nullable' : ''}</div>
+            </div>
+            <div class="column-controls" id="controls_\${index}" style="display: none;">
+                <select onchange="setAggregate(\${index}, this.value)">
+                    <option value="NONE">No aggregate</option>
+                    <option value="COUNT">COUNT</option>
+                    <option value="SUM">SUM</option>
+                    <option value="AVG">AVG</option>
+                    <option value="MIN">MIN</option>
+                    <option value="MAX">MAX</option>
+                </select>
+                <input type="text" placeholder="Alias..." onchange="setAlias(\${index}, this.value)">
+            </div>
+        </div>
+    \`).join('');
+}
+
+function toggleColumn(index) {
+    const checkbox = document.getElementById(\`col_\${index}\`);
+    const controls = document.getElementById(\`controls_\${index}\`);
+    const column = columnsData[index];
+
+    if (checkbox.checked) {
+        controls.style.display = 'flex';
+        queryBuilderState.selectColumns.push({
+            column: column.name,
+            alias: undefined,
+            aggregate: 'NONE'
+        });
+    } else {
+        controls.style.display = 'none';
+        queryBuilderState.selectColumns = queryBuilderState.selectColumns.filter(
+            col => col.column !== column.name
+        );
+    }
+
+    updateBuilder();
+}
+
+function setAggregate(index, aggregate) {
+    const column = columnsData[index];
+    const selectCol = queryBuilderState.selectColumns.find(col => col.column === column.name);
+    if (selectCol) {
+        selectCol.aggregate = aggregate;
+        updateBuilder();
+    }
+}
+
+function setAlias(index, alias) {
+    const column = columnsData[index];
+    const selectCol = queryBuilderState.selectColumns.find(col => col.column === column.name);
+    if (selectCol) {
+        selectCol.alias = alias || undefined;
+        updateBuilder();
+    }
+}
+
+function selectAllColumns() {
+    columnsData.forEach((col, index) => {
+        const checkbox = document.getElementById(\`col_\${index}\`);
+        if (!checkbox.checked) {
+            checkbox.checked = true;
+            toggleColumn(index);
+        }
+    });
+}
+
+function deselectAllColumns() {
+    columnsData.forEach((col, index) => {
+        const checkbox = document.getElementById(\`col_\${index}\`);
+        if (checkbox.checked) {
+            checkbox.checked = false;
+            toggleColumn(index);
+        }
+    });
+}
+
+function addFilter() {
+    queryBuilderState.filters.push({
+        column: columnsData[0]?.name || '',
+        operator: '=',
+        value: '',
+        logicalOperator: 'AND'
+    });
+    renderFilters();
+    updateBuilder();
+}
+
+function renderFilters() {
+    const filtersList = document.getElementById('filtersList');
+
+    if (queryBuilderState.filters.length === 0) {
+        filtersList.innerHTML = '<p class="empty-state">No filters added. Click "+ Add Filter" to add conditions.</p>';
+        return;
+    }
+
+    filtersList.innerHTML = queryBuilderState.filters.map((filter, index) => \`
+        <div class="filter-item">
+            <select class="field-column" onchange="updateFilter(\${index}, 'column', this.value)">
+                \${columnsData.map(col =>
+                    \`<option value="\${col.name}" \${filter.column === col.name ? 'selected' : ''}>\${col.name}</option>\`
+                ).join('')}
+            </select>
+
+            <select class="field-operator" onchange="updateFilter(\${index}, 'operator', this.value)">
+                <option value="=" \${filter.operator === '=' ? 'selected' : ''}>=</option>
+                <option value="!=" \${filter.operator === '!=' ? 'selected' : ''}>!=</option>
+                <option value="<" \${filter.operator === '<' ? 'selected' : ''}>&lt;</option>
+                <option value=">" \${filter.operator === '>' ? 'selected' : ''}>&gt;</option>
+                <option value="<=" \${filter.operator === '<=' ? 'selected' : ''}>&lt;=</option>
+                <option value=">=" \${filter.operator === '>=' ? 'selected' : ''}>&gt;=</option>
+                <option value="LIKE" \${filter.operator === 'LIKE' ? 'selected' : ''}>LIKE</option>
+                <option value="NOT LIKE" \${filter.operator === 'NOT LIKE' ? 'selected' : ''}>NOT LIKE</option>
+                <option value="IN" \${filter.operator === 'IN' ? 'selected' : ''}>IN</option>
+                <option value="NOT IN" \${filter.operator === 'NOT IN' ? 'selected' : ''}>NOT IN</option>
+                <option value="IS NULL" \${filter.operator === 'IS NULL' ? 'selected' : ''}>IS NULL</option>
+                <option value="IS NOT NULL" \${filter.operator === 'IS NOT NULL' ? 'selected' : ''}>IS NOT NULL</option>
+            </select>
+
+            <input class="field-value" type="text" value="\${filter.value}"
+                onchange="updateFilter(\${index}, 'value', this.value)"
+                placeholder="Value..."
+                \${filter.operator === 'IS NULL' || filter.operator === 'IS NOT NULL' ? 'disabled' : ''}>
+
+            \${index < queryBuilderState.filters.length - 1 ? \`
+                <select class="field-logic" onchange="updateFilter(\${index}, 'logicalOperator', this.value)">
+                    <option value="AND" \${filter.logicalOperator === 'AND' ? 'selected' : ''}>AND</option>
+                    <option value="OR" \${filter.logicalOperator === 'OR' ? 'selected' : ''}>OR</option>
+                </select>
+            \` : ''}
+
+            <button class="remove-btn" onclick="removeFilter(\${index})">Remove</button>
+        </div>
+    \`).join('');
+}
+
+function updateFilter(index, field, value) {
+    if (queryBuilderState.filters[index]) {
+        queryBuilderState.filters[index][field] = value;
+
+        if (field === 'operator') {
+            renderFilters();
+        }
+
+        updateBuilder();
+    }
+}
+
+function removeFilter(index) {
+    queryBuilderState.filters.splice(index, 1);
+    renderFilters();
+    updateBuilder();
+}
+
+function addJoin() {
+    queryBuilderState.joins.push({
+        table: relatedTablesData[0] || '',
+        type: 'INNER',
+        leftColumn: '',
+        rightColumn: ''
+    });
+    renderJoins();
+    updateBuilder();
+}
+
+function renderJoins() {
+    const joinsList = document.getElementById('joinsList');
+
+    if (queryBuilderState.joins.length === 0) {
+        joinsList.innerHTML = '<p class="empty-state">No joins added. Click "+ Add Join" to join related tables.</p>';
+        return;
+    }
+
+    joinsList.innerHTML = queryBuilderState.joins.map((join, index) => \`
+        <div class="join-item">
+            <select onchange="updateJoin(\${index}, 'type', this.value)">
+                <option value="INNER" \${join.type === 'INNER' ? 'selected' : ''}>INNER JOIN</option>
+                <option value="LEFT" \${join.type === 'LEFT' ? 'selected' : ''}>LEFT JOIN</option>
+                <option value="RIGHT" \${join.type === 'RIGHT' ? 'selected' : ''}>RIGHT JOIN</option>
+                <option value="FULL" \${join.type === 'FULL' ? 'selected' : ''}>FULL JOIN</option>
+            </select>
+
+            <input type="text" value="\${join.table}" onchange="updateJoin(\${index}, 'table', this.value)"
+                placeholder="Table name..." style="min-width: 120px;">
+
+            <span style="font-size: 12px;">ON</span>
+
+            <input type="text" value="\${join.leftColumn}" onchange="updateJoin(\${index}, 'leftColumn', this.value)"
+                placeholder="Left column..." style="min-width: 120px;">
+
+            <span style="font-size: 12px;">=</span>
+
+            <input type="text" value="\${join.rightColumn}" onchange="updateJoin(\${index}, 'rightColumn', this.value)"
+                placeholder="Right column..." style="min-width: 120px;">
+
+            <button class="remove-btn" onclick="removeJoin(\${index})">Remove</button>
+        </div>
+    \`).join('');
+}
+
+function updateJoin(index, field, value) {
+    if (queryBuilderState.joins[index]) {
+        queryBuilderState.joins[index][field] = value;
+        updateBuilder();
+    }
+}
+
+function removeJoin(index) {
+    queryBuilderState.joins.splice(index, 1);
+    renderJoins();
+    updateBuilder();
+}
+
+function addOrderBy() {
+    const priority = queryBuilderState.orderBy.length;
+    queryBuilderState.orderBy.push({
+        column: columnsData[0]?.name || '',
+        direction: 'ASC',
+        priority
+    });
+    renderOrderBy();
+    updateBuilder();
+}
+
+function renderOrderBy() {
+    const orderByList = document.getElementById('orderByList');
+
+    if (queryBuilderState.orderBy.length === 0) {
+        orderByList.innerHTML = '<p class="empty-state">No sorting applied. Click "+ Add Sort" to order results.</p>';
+        return;
+    }
+
+    orderByList.innerHTML = queryBuilderState.orderBy.map((order, index) => \`
+        <div class="orderby-item">
+            <span style="font-size: 12px; min-width: 70px;">Priority \${order.priority + 1}:</span>
+
+            <select onchange="updateOrderBy(\${index}, 'column', this.value)" style="min-width: 150px;">
+                \${columnsData.map(col =>
+                    \`<option value="\${col.name}" \${order.column === col.name ? 'selected' : ''}>\${col.name}</option>\`
+                ).join('')}
+            </select>
+
+            <select onchange="updateOrderBy(\${index}, 'direction', this.value)">
+                <option value="ASC" \${order.direction === 'ASC' ? 'selected' : ''}>Ascending (A-Z)</option>
+                <option value="DESC" \${order.direction === 'DESC' ? 'selected' : ''}>Descending (Z-A)</option>
+            </select>
+
+            <button class="remove-btn" onclick="removeOrderBy(\${index})">Remove</button>
+        </div>
+    \`).join('');
+}
+
+function updateOrderBy(index, field, value) {
+    if (queryBuilderState.orderBy[index]) {
+        queryBuilderState.orderBy[index][field] = value;
+        updateBuilder();
+    }
+}
+
+function removeOrderBy(index) {
+    queryBuilderState.orderBy.splice(index, 1);
+    queryBuilderState.orderBy.forEach((order, i) => {
+        order.priority = i;
+    });
+    renderOrderBy();
+    updateBuilder();
+}
+
+function updateBuilder() {
+    queryBuilderState.distinct = document.getElementById('distinctCheck')?.checked || false;
+
+    const limitValue = document.getElementById('limitInput')?.value;
+    queryBuilderState.limit = limitValue ? parseInt(limitValue) : undefined;
+
+    const offsetValue = document.getElementById('offsetInput')?.value;
+    queryBuilderState.offset = offsetValue ? parseInt(offsetValue) : undefined;
+
+    vscode.postMessage({
+        command: 'generateSQL',
+        builderState: queryBuilderState,
+        dbType: dbType
+    });
+}
+
+function displayGeneratedSQL(sql, validation) {
+    const sqlPreview = document.getElementById('sqlPreview');
+    const validationErrors = document.getElementById('validationErrors');
+
+    sqlPreview.textContent = sql;
+
+    if (!validation.valid) {
+        validationErrors.style.display = 'block';
+        validationErrors.innerHTML = '<strong>Validation Errors:</strong><ul>' +
+            validation.errors.map(err => \`<li>\${err}</li>\`).join('') +
+            '</ul>';
+    } else {
+        validationErrors.style.display = 'none';
+    }
+}
+
+function copySQL() {
+    const sql = document.getElementById('sqlPreview').textContent;
+    navigator.clipboard.writeText(sql).then(() => {
+        const btn = event.target;
+        const originalText = btn.textContent;
+        btn.textContent = '✓ Copied!';
+        setTimeout(() => {
+            btn.textContent = originalText;
+        }, 2000);
+    });
+}
+
+function executeBuilderQuery() {
+    const sql = document.getElementById('sqlPreview').textContent;
+    if (!sql || sql.trim() === '') {
+        alert('Please build a query first');
+        return;
+    }
+
+    if (editor) {
+        editor.setValue(sql);
+    }
+    vscode.postMessage({ command: 'executeQuery', connectionId, query: sql, schema });
+}
+
+function saveCurrentQuery() {
+    const sql = document.getElementById('sqlPreview').textContent;
+    if (!sql || sql.trim() === '') {
+        alert('Please build a query first');
+        return;
+    }
+
+    const name = prompt('Enter a name for this query:');
+    if (!name) return;
+
+    const description = prompt('Enter a description (optional):');
+
+    const savedQuery = {
+        id: Date.now().toString(),
+        name,
+        description: description || undefined,
+        state: JSON.parse(JSON.stringify(queryBuilderState)),
+        sql,
+        createdAt: Date.now(),
+        updatedAt: Date.now()
+    };
+
+    vscode.postMessage({
+        command: 'saveQuery',
+        query: savedQuery
+    });
+}
+
+function renderSavedQueries(queries) {
+    const savedQueriesList = document.getElementById('savedQueriesList');
+
+    if (!queries || queries.length === 0) {
+        savedQueriesList.innerHTML = '<p class="empty-state">No saved queries yet.</p>';
+        return;
+    }
+
+    savedQueriesList.innerHTML = queries.map(query => \`
+        <div class="saved-query-item" onclick="loadSavedQuery('\${query.id}')">
+            <div class="saved-query-name">\${query.name}</div>
+            \${query.description ? \`<div class="saved-query-desc">\${query.description}</div>\` : ''}
+            <div class="saved-query-sql">\${query.sql}</div>
+        </div>
+    \`).join('');
+}
+
+function loadSavedQuery(queryId) {
+    vscode.postMessage({
+        command: 'loadQuery',
+        queryId
+    });
+}
+
+function applyLoadedQuery(query) {
+    queryBuilderState = JSON.parse(JSON.stringify(query.state));
+
+    document.getElementById('distinctCheck').checked = queryBuilderState.distinct;
+    document.getElementById('limitInput').value = queryBuilderState.limit || '';
+    document.getElementById('offsetInput').value = queryBuilderState.offset || 0;
+
+    columnsData.forEach((col, index) => {
+        const checkbox = document.getElementById(\`col_\${index}\`);
+        const controls = document.getElementById(\`controls_\${index}\`);
+        const selectCol = queryBuilderState.selectColumns.find(sc => sc.column === col.name);
+
+        if (selectCol) {
+            checkbox.checked = true;
+            controls.style.display = 'flex';
+
+            const aggregateSelect = controls.querySelector('select');
+            const aliasInput = controls.querySelector('input');
+            if (aggregateSelect) aggregateSelect.value = selectCol.aggregate;
+            if (aliasInput) aliasInput.value = selectCol.alias || '';
+        } else {
+            checkbox.checked = false;
+            controls.style.display = 'none';
+        }
+    });
+
+    renderFilters();
+    renderJoins();
+    renderOrderBy();
+    updateBuilder();
+
+    alert(\`Loaded query: \${query.name}\`);
+}
+
+window.addEventListener('message', event => {
+    const message = event.data;
+
+    switch (message.command) {
+        case 'tablesData':
+            renderTables(message.tables, queryBuilderState.table);
+            break;
+        case 'columnsData':
+            renderColumns(message.columns);
+            break;
+        case 'generatedSQL':
+            displayGeneratedSQL(message.sql, message.validation);
+            break;
+        case 'savedQueriesList':
+            renderSavedQueries(message.queries);
+            break;
+        case 'loadedQuery':
+            applyLoadedQuery(message.query);
+            break;
+    }
+});
+`;
     }
 
     private getWebviewContent(data: QueryResult, connectionId: string, resource: string, dbType: string, schema?: string, previousQuery?: string): string {
@@ -499,69 +1230,513 @@ export class DataViewerPanel {
             color: var(--vscode-descriptionForeground);
             margin-left: 10px;
         }
+
+        /* Query Builder Styles */
+        .tabs {
+            display: flex;
+            border-bottom: 1px solid var(--vscode-panel-border);
+            margin-bottom: 15px;
+            gap: 2px;
+        }
+        .tab {
+            padding: 10px 20px;
+            background-color: var(--vscode-tab-inactiveBackground);
+            color: var(--vscode-tab-inactiveForeground);
+            border: none;
+            border-bottom: 2px solid transparent;
+            cursor: pointer;
+            font-family: var(--vscode-font-family);
+            font-size: 13px;
+            transition: all 0.2s;
+        }
+        .tab:hover {
+            background-color: var(--vscode-tab-hoverBackground);
+        }
+        .tab.active {
+            background-color: var(--vscode-tab-activeBackground);
+            color: var(--vscode-tab-activeForeground);
+            border-bottom-color: var(--vscode-textLink-foreground);
+        }
+        .tab-content {
+            display: none;
+        }
+        .tab-content.active {
+            display: block;
+        }
+        .builder-container {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+        .builder-section {
+            border: 1px solid var(--vscode-panel-border);
+            border-radius: 4px;
+            background-color: var(--vscode-editor-background);
+        }
+        .section-title {
+            margin: 0;
+            padding: 10px 15px;
+            background-color: var(--vscode-editor-selectionBackground);
+            border-bottom: 1px solid var(--vscode-panel-border);
+            font-size: 14px;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .section-content {
+            padding: 15px;
+        }
+        .columns-list {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 10px;
+            margin-top: 10px;
+        }
+        .column-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 8px;
+            border: 1px solid var(--vscode-input-border);
+            border-radius: 4px;
+            background-color: var(--vscode-input-background);
+        }
+        .column-item input[type="checkbox"] {
+            margin: 0;
+        }
+        .column-info {
+            flex: 1;
+            min-width: 0;
+        }
+        .column-name {
+            font-weight: 500;
+            color: var(--vscode-foreground);
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+        .column-type {
+            font-size: 11px;
+            color: var(--vscode-descriptionForeground);
+        }
+        .column-badge {
+            font-size: 9px;
+            padding: 2px 5px;
+            border-radius: 3px;
+            background-color: var(--vscode-badge-background);
+            color: var(--vscode-badge-foreground);
+        }
+        .column-controls {
+            display: flex;
+            gap: 5px;
+            flex-wrap: wrap;
+        }
+        .column-controls select,
+        .column-controls input {
+            font-size: 11px;
+            padding: 4px;
+            min-width: 80px;
+        }
+        .filters-list, .joins-list, .orderby-list {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .filter-item, .join-item, .orderby-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px;
+            border: 1px solid var(--vscode-input-border);
+            border-radius: 4px;
+            background-color: var(--vscode-input-background);
+            flex-wrap: wrap;
+        }
+        .filter-item select,
+        .filter-item input,
+        .join-item select,
+        .orderby-item select {
+            padding: 6px;
+            background: var(--vscode-dropdown-background);
+            color: var(--vscode-dropdown-foreground);
+            border: 1px solid var(--vscode-dropdown-border);
+            border-radius: 3px;
+            font-size: 12px;
+        }
+        .filter-item .field-column {
+            min-width: 150px;
+        }
+        .filter-item .field-operator {
+            min-width: 120px;
+        }
+        .filter-item .field-value {
+            flex: 1;
+            min-width: 150px;
+        }
+        .filter-item .field-logic {
+            min-width: 70px;
+        }
+        .remove-btn {
+            padding: 4px 8px;
+            background-color: var(--vscode-button-secondaryBackground);
+            color: var(--vscode-button-secondaryForeground);
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 11px;
+        }
+        .remove-btn:hover {
+            background-color: var(--vscode-button-secondaryHoverBackground);
+        }
+        .action-btn-small {
+            padding: 4px 10px;
+            background-color: var(--vscode-button-secondaryBackground);
+            color: var(--vscode-button-secondaryForeground);
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 11px;
+            margin-left: auto;
+        }
+        .action-btn-small:hover {
+            background-color: var(--vscode-button-secondaryHoverBackground);
+        }
+        .action-btn {
+            padding: 6px 12px;
+            background-color: var(--vscode-button-background);
+            color: var(--vscode-button-foreground);
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+        .action-btn:hover {
+            background-color: var(--vscode-button-hoverBackground);
+        }
+        .action-btn.primary-btn {
+            background-color: var(--vscode-button-background);
+            font-weight: 600;
+        }
+        .limit-controls {
+            display: flex;
+            gap: 20px;
+            flex-wrap: wrap;
+        }
+        .control-group {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+        .control-group label {
+            font-size: 12px;
+            font-weight: 500;
+        }
+        .control-group input {
+            padding: 6px;
+            width: 150px;
+        }
+        .sql-preview-section {
+            position: sticky;
+            bottom: 0;
+            z-index: 10;
+            box-shadow: 0 -2px 10px rgba(0,0,0,0.1);
+        }
+        .sql-preview-code {
+            background-color: var(--vscode-textCodeBlock-background);
+            color: var(--vscode-editor-foreground);
+            padding: 12px;
+            border-radius: 4px;
+            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+            font-size: 13px;
+            white-space: pre-wrap;
+            word-break: break-all;
+            max-height: 300px;
+            overflow-y: auto;
+            border: 1px solid var(--vscode-input-border);
+        }
+        .validation-errors {
+            margin-top: 10px;
+            padding: 10px;
+            background-color: var(--vscode-inputValidation-errorBackground);
+            border: 1px solid var(--vscode-inputValidation-errorBorder);
+            border-radius: 4px;
+            color: var(--vscode-errorForeground);
+            font-size: 12px;
+        }
+        .validation-errors ul {
+            margin: 5px 0;
+            padding-left: 20px;
+        }
+        .empty-state {
+            color: var(--vscode-descriptionForeground);
+            font-size: 12px;
+            font-style: italic;
+            margin: 0;
+        }
+        .saved-queries-list {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .saved-query-item {
+            padding: 10px;
+            border: 1px solid var(--vscode-input-border);
+            border-radius: 4px;
+            background-color: var(--vscode-input-background);
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+        .saved-query-item:hover {
+            background-color: var(--vscode-list-hoverBackground);
+        }
+        .saved-query-name {
+            font-weight: 600;
+            font-size: 13px;
+            margin-bottom: 4px;
+        }
+        .saved-query-desc {
+            font-size: 11px;
+            color: var(--vscode-descriptionForeground);
+            margin-bottom: 4px;
+        }
+        .saved-query-sql {
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 10px;
+            color: var(--vscode-descriptionForeground);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .info-row {
+            margin: 5px 0;
+            font-size: 13px;
+        }
+        .related-tables {
+            margin-top: 10px;
+            padding: 10px;
+            background-color: var(--vscode-textCodeBlock-background);
+            border-radius: 4px;
+        }
     </style>
 </head>
 <body>
     <h2>${resource || 'Query Results'}</h2>
 
-    ${dbType !== 'mongodb' && dbType !== 'redis' ? `
+    ${dbType !== 'mongodb' && dbType !== 'redis' && resource ? `
+    <!-- Tabs -->
+    <div class="tabs">
+        <button class="tab active" data-tab="sqlEditor" onclick="switchTab('sqlEditor')">SQL Editor</button>
+        <button class="tab" data-tab="queryBuilder" onclick="switchTab('queryBuilder')">Query Builder</button>
+    </div>
+
+    <!-- SQL Editor Tab -->
+    <div id="sqlEditorTab" class="tab-content active">
+        <div class="query-container">
+            <h3 style="margin-top: 0; margin-bottom: 10px; font-size: 14px; color: var(--vscode-foreground);">SQL Query Editor</h3>
+            <p style="margin: 0 0 10px 0; font-size: 12px; color: var(--vscode-descriptionForeground);">
+                ${schema ? `Query any table in the <strong>${schema}</strong> schema. You can reference tables without schema prefix.` : 'Execute custom SQL queries against the database.'}
+            </p>
+            <div class="query-editor-wrapper">
+                <textarea
+                    class="query-editor"
+                    id="sqlQuery"
+                    placeholder="-- Enter SQL query here&#x0a;-- Example: SELECT * FROM ${resource || 'table_name'} WHERE id > 10 LIMIT 50${schema ? '&#x0a;-- You can query any table in this schema without the schema prefix' : ''}"
+                    spellcheck="false"
+                >${previousQuery || ''}</textarea>
+            </div>
+            <div class="query-actions">
+                <button onclick="executeQuery()">▶ Execute Query</button>
+                ${resource ? '<button onclick="refresh()">🔄 Refresh Table</button>' : ''}
+                <span class="query-hint">Ctrl+Enter or Cmd+Enter to execute</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Query Builder Tab Content -->
+    <div id="queryBuilderTab" class="tab-content">
+        <div class="builder-container">
+            <!-- Table Selection Section -->
+            <div class="builder-section">
+                <h4 class="section-title">Select Table</h4>
+                <div class="section-content">
+                    <div class="info-row" id="builderSchemaInfo" style="display: none; margin-bottom: 10px;">
+                        <strong>Schema:</strong> <span id="builderSchemaName"></span>
+                    </div>
+                    <div class="control-group">
+                        <label for="tableSelector"><strong>Table:</strong></label>
+                        <select id="tableSelector" onchange="changeTable()" style="width: 100%; padding: 8px; font-size: 13px;">
+                            <option value="">Loading tables...</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Column Selection Section -->
+            <div class="builder-section">
+                <h4 class="section-title">
+                    SELECT Columns
+                    <button class="action-btn-small" onclick="selectAllColumns()">Select All</button>
+                    <button class="action-btn-small" onclick="deselectAllColumns()">Deselect All</button>
+                </h4>
+                <div class="section-content">
+                    <label>
+                        <input type="checkbox" id="distinctCheck" onchange="updateBuilder()">
+                        <strong>DISTINCT</strong> - Return only unique rows
+                    </label>
+                    <div id="columnsList" class="columns-list"></div>
+                </div>
+            </div>
+
+            <!-- WHERE Conditions Section -->
+            <div class="builder-section">
+                <h4 class="section-title">
+                    WHERE Conditions
+                    <button class="action-btn-small" onclick="addFilter()">+ Add Filter</button>
+                </h4>
+                <div class="section-content">
+                    <div id="filtersList" class="filters-list">
+                        <p class="empty-state">No filters added. Click "+ Add Filter" to add conditions.</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- JOIN Section -->
+            <div class="builder-section">
+                <h4 class="section-title">
+                    JOIN Tables
+                    <button class="action-btn-small" onclick="addJoin()">+ Add Join</button>
+                </h4>
+                <div class="section-content">
+                    <div id="joinsList" class="joins-list">
+                        <p class="empty-state">No joins added. Click "+ Add Join" to join related tables.</p>
+                    </div>
+                    <div id="relatedTables" class="related-tables" style="display: none;">
+                        <p style="font-size: 12px; color: var(--vscode-descriptionForeground); margin: 5px 0;">
+                            <strong>Related tables:</strong> <span id="relatedTablesList"></span>
+                        </p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ORDER BY Section -->
+            <div class="builder-section">
+                <h4 class="section-title">
+                    ORDER BY
+                    <button class="action-btn-small" onclick="addOrderBy()">+ Add Sort</button>
+                </h4>
+                <div class="section-content">
+                    <div id="orderByList" class="orderby-list">
+                        <p class="empty-state">No sorting applied. Click "+ Add Sort" to order results.</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- LIMIT/OFFSET Section -->
+            <div class="builder-section">
+                <h4 class="section-title">LIMIT & OFFSET</h4>
+                <div class="section-content">
+                    <div class="limit-controls">
+                        <div class="control-group">
+                            <label for="limitInput">LIMIT (max rows):</label>
+                            <input type="number" id="limitInput" min="0" step="1" placeholder="No limit" onchange="updateBuilder()">
+                        </div>
+                        <div class="control-group">
+                            <label for="offsetInput">OFFSET (skip rows):</label>
+                            <input type="number" id="offsetInput" min="0" step="1" value="0" onchange="updateBuilder()">
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- SQL Preview Section -->
+            <div class="builder-section sql-preview-section">
+                <h4 class="section-title">
+                    SQL Preview
+                    <div style="margin-left: auto; display: flex; gap: 8px;">
+                        <button class="action-btn" onclick="copySQL()">📋 Copy SQL</button>
+                        <button class="action-btn primary-btn" onclick="executeBuilderQuery()">▶ Run Query</button>
+                    </div>
+                </h4>
+                <div class="section-content">
+                    <div id="sqlPreview" class="sql-preview-code"></div>
+                    <div id="validationErrors" class="validation-errors" style="display: none;"></div>
+                </div>
+            </div>
+
+            <!-- Saved Queries Section -->
+            <div class="builder-section">
+                <h4 class="section-title">
+                    Saved Queries
+                    <button class="action-btn-small" onclick="saveCurrentQuery()">💾 Save Current</button>
+                </h4>
+                <div class="section-content">
+                    <div id="savedQueriesList" class="saved-queries-list">
+                        <p class="empty-state">No saved queries yet.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    ` : dbType !== 'mongodb' && dbType !== 'redis' ? `
     <div class="query-container">
         <h3 style="margin-top: 0; margin-bottom: 10px; font-size: 14px; color: var(--vscode-foreground);">SQL Query Editor</h3>
         <p style="margin: 0 0 10px 0; font-size: 12px; color: var(--vscode-descriptionForeground);">
-            ${schema ? `Query any table in the <strong>${schema}</strong> schema. You can reference tables without schema prefix.` : 'Execute custom SQL queries against the database.'}
+            Execute custom SQL queries against the database.
         </p>
         <div class="query-editor-wrapper">
             <textarea
                 class="query-editor"
                 id="sqlQuery"
-                placeholder="-- Enter SQL query here&#x0a;-- Example: SELECT * FROM ${resource || 'table_name'} WHERE id > 10 LIMIT 50${schema ? '&#x0a;-- You can query any table in this schema without the schema prefix' : ''}"
+                placeholder="-- Enter SQL query here"
                 spellcheck="false"
             >${previousQuery || ''}</textarea>
         </div>
         <div class="query-actions">
             <button onclick="executeQuery()">▶ Execute Query</button>
-            ${resource ? '<button onclick="refresh()">🔄 Refresh Table</button>' : ''}
             <span class="query-hint">Ctrl+Enter or Cmd+Enter to execute</span>
         </div>
     </div>
     ` : ''}
 
-    ${resource ? `
-    <div class="results-header">
-        <div>
-            <span class="results-title">Results: ${schema ? schema + '.' : ''}${resource}</span>
-            <span class="results-subtitle">${data.rows.length} row${data.rows.length !== 1 ? 's' : ''}</span>
+    <div id="resultsContainer">
+        ${resource ? `
+        <div class="results-header">
+            <div>
+                <span class="results-title">Results: ${schema ? schema + '.' : ''}${resource}</span>
+                <span class="results-subtitle" id="rowCount">${data.rows.length} row${data.rows.length !== 1 ? 's' : ''}</span>
+            </div>
+            <button onclick="refresh()">🔄 Refresh</button>
         </div>
-        <button onclick="refresh()">🔄 Refresh</button>
-    </div>
-    ` : `
-    <div class="results-header">
-        <div>
-            <span class="results-title">Query Results</span>
-            <span class="results-subtitle">${data.rows.length} row${data.rows.length !== 1 ? 's' : ''}</span>
+        ` : `
+        <div class="results-header">
+            <div>
+                <span class="results-title">Query Results</span>
+                <span class="results-subtitle" id="rowCount">${data.rows.length} row${data.rows.length !== 1 ? 's' : ''}</span>
+            </div>
         </div>
-    </div>
-    `}
+        `}
 
-    <table>
-        <thead>
-            <tr>
-                ${data.columns.map(col => `<th>${col}</th>`).join('')}
-                <th>Actions</th>
-            </tr>
-        </thead>
-        <tbody>
-            ${rows.map((row, rowIdx) => `
+        <table id="resultsTable">
+            <thead>
                 <tr>
-                    ${row.map(cell => `<td>${cell}</td>`).join('')}
-                    <td>
-                        <button onclick="editRow(${rowIdx})">Edit</button>
-                        <button onclick="deleteRow(${rowIdx})">Delete</button>
-                    </td>
+                    ${data.columns.map(col => `<th>${col}</th>`).join('')}
+                    <th>Actions</th>
                 </tr>
-            `).join('')}
-        </tbody>
-    </table>
+            </thead>
+            <tbody>
+                ${rows.map((row, rowIdx) => `
+                    <tr>
+                        ${row.map(cell => `<td>${cell}</td>`).join('')}
+                        <td>
+                            <button onclick="editRow(${rowIdx})">Edit</button>
+                            <button onclick="deleteRow(${rowIdx})">Delete</button>
+                        </td>
+                    </tr>
+                `).join('')}
+            </tbody>
+        </table>
+    </div>
 
     <div class="overlay" id="overlay"></div>
     <div class="edit-form" id="editForm">
@@ -688,6 +1863,51 @@ export class DataViewerPanel {
             closeEdit();
         }
 
+        function updateQueryResults(columns, rows, rowCount) {
+            // Update the data object
+            data.columns = columns;
+            data.rows = rows;
+
+            // Update row count
+            const rowCountElement = document.getElementById('rowCount');
+            if (rowCountElement) {
+                rowCountElement.textContent = rowCount + ' row' + (rowCount !== 1 ? 's' : '');
+            }
+
+            // Update table
+            const table = document.getElementById('resultsTable');
+            if (table) {
+                // Update header
+                const thead = table.querySelector('thead tr');
+                if (thead) {
+                    thead.innerHTML = columns.map(col => \`<th>\${col}</th>\`).join('') + '<th>Actions</th>';
+                }
+
+                // Update body
+                const tbody = table.querySelector('tbody');
+                if (tbody) {
+                    tbody.innerHTML = rows.map((row, rowIdx) => \`
+                        <tr>
+                            \${row.map(cell => {
+                                const value = typeof cell === 'object' ? JSON.stringify(cell) : String(cell);
+                                return \`<td>\${value}</td>\`;
+                            }).join('')}
+                            <td>
+                                <button onclick="editRow(\${rowIdx})">Edit</button>
+                                <button onclick="deleteRow(\${rowIdx})">Delete</button>
+                            </td>
+                        </tr>
+                    \`).join('');
+                }
+            }
+
+            // Switch to SQL Editor tab to show results
+            const sqlEditorTab = document.querySelector('[data-tab="sqlEditor"]');
+            if (sqlEditorTab) {
+                switchTab('sqlEditor');
+            }
+        }
+
         function deleteRow(rowIdx) {
             if (!confirm('Are you sure you want to delete this record?')) {
                 return;
@@ -725,7 +1945,24 @@ export class DataViewerPanel {
 
             vscode.postMessage(messageData);
         }
+
+        // Listen for query results to update the table without destroying the page
+        window.addEventListener('message', event => {
+            const message = event.data;
+
+            if (message.command === 'queryResults') {
+                updateQueryResults(message.columns, message.rows, message.rowCount);
+            }
+        });
+
     </script>
+    ${resource ? `<script>${this.getQueryBuilderJSInline()}</script>` : ''}
+    ${resource ? `<script>
+        // Initialize query builder after the functions are loaded
+        if (typeof initializeQueryBuilder === 'function') {
+            initializeQueryBuilder('${resource}', ${schema ? `'${schema}'` : 'undefined'});
+        }
+    </script>` : ''}
 </body>
 </html>`;
     }

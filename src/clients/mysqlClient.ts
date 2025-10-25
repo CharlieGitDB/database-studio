@@ -1,5 +1,5 @@
 import * as mysql from 'mysql2/promise';
-import { ConnectionConfig, QueryResult } from '../types';
+import { ConnectionConfig, QueryResult, ColumnInfo } from '../types';
 
 export class MySQLClient {
     private connection: mysql.Connection | null = null;
@@ -94,5 +94,65 @@ export class MySQLClient {
 
     isConnected(): boolean {
         return this.connection !== null;
+    }
+
+    async getColumns(tableName: string, database?: string): Promise<ColumnInfo[]> {
+        if (!this.connection) {
+            throw new Error('Not connected');
+        }
+
+        const dbName = database || (this.connection as any).config.database;
+
+        // Get column information including type, nullable, and key status
+        const columnsQuery = `
+            SELECT
+                COLUMN_NAME as column_name,
+                DATA_TYPE as data_type,
+                IS_NULLABLE as is_nullable,
+                COLUMN_KEY as column_key
+            FROM INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_SCHEMA = ?
+                AND TABLE_NAME = ?
+            ORDER BY ORDINAL_POSITION
+        `;
+
+        const [columnsResult] = await this.connection.query(columnsQuery, [dbName, tableName]);
+
+        // Get foreign key information
+        const fkQuery = `
+            SELECT
+                COLUMN_NAME as column_name,
+                REFERENCED_TABLE_NAME as referenced_table_name,
+                REFERENCED_COLUMN_NAME as referenced_column_name
+            FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE
+            WHERE TABLE_SCHEMA = ?
+                AND TABLE_NAME = ?
+                AND REFERENCED_TABLE_NAME IS NOT NULL
+        `;
+
+        const [fkResult] = await this.connection.query(fkQuery, [dbName, tableName]);
+
+        // Create a map of foreign key information
+        const fkMap = new Map<string, { table: string; column: string }>();
+        for (const row of fkResult as any[]) {
+            fkMap.set(row.column_name, {
+                table: row.referenced_table_name,
+                column: row.referenced_column_name
+            });
+        }
+
+        // Combine the results
+        return (columnsResult as any[]).map((row: any) => {
+            const fk = fkMap.get(row.column_name);
+            return {
+                name: row.column_name,
+                type: row.data_type,
+                nullable: row.is_nullable === 'YES',
+                isPrimaryKey: row.column_key === 'PRI',
+                isForeignKey: !!fk,
+                referencedTable: fk?.table,
+                referencedColumn: fk?.column
+            };
+        });
     }
 }
