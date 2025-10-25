@@ -116,6 +116,7 @@ export class DataViewerPanel {
             this.currentSchema = schema;
 
             let data: QueryResult;
+            let defaultQuery: string | undefined;
 
             if (client instanceof RedisClient) {
                 if (resource === 'keys') {
@@ -129,8 +130,13 @@ export class DataViewerPanel {
                 }
             } else if (client instanceof MySQLClient) {
                 data = await client.getTableData(resource);
+                // Generate default SELECT query for MySQL
+                defaultQuery = `SELECT * FROM ${resource} LIMIT 100;`;
             } else if (client instanceof PostgresClient) {
                 data = await client.getTableData(resource, schema);
+                // Generate default SELECT query for PostgreSQL with schema qualification
+                const tableName = schema ? `"${schema}"."${resource}"` : `"${resource}"`;
+                defaultQuery = `SELECT * FROM ${tableName} LIMIT 100;`;
             } else if (client instanceof MongoDBClient) {
                 data = await client.getCollectionData(resource, schema);
             } else {
@@ -138,7 +144,7 @@ export class DataViewerPanel {
                 return;
             }
 
-            this._panel.webview.html = this.getWebviewContent(data, connectionId, resource, config.type, schema, undefined);
+            this._panel.webview.html = this.getWebviewContent(data, connectionId, resource, config.type, schema, defaultQuery);
         } catch (error) {
             this.showError(`Failed to load data: ${error}`);
         }
@@ -480,18 +486,22 @@ export class DataViewerPanel {
 
     ${dbType !== 'mongodb' && dbType !== 'redis' ? `
     <div class="query-container">
+        <h3 style="margin-top: 0; margin-bottom: 10px; font-size: 14px; color: var(--vscode-foreground);">SQL Query Editor</h3>
+        <p style="margin: 0 0 10px 0; font-size: 12px; color: var(--vscode-descriptionForeground);">
+            ${schema ? `Query any table in the <strong>${schema}</strong> schema. You can reference tables without schema prefix.` : 'Execute custom SQL queries against the database.'}
+        </p>
         <div class="query-editor-wrapper">
             <textarea
                 class="query-editor"
                 id="sqlQuery"
-                placeholder="-- Enter SQL query here&#x0a;-- Example: SELECT * FROM ${resource || 'table_name'} WHERE id > 10 LIMIT 50"
+                placeholder="-- Enter SQL query here&#x0a;-- Example: SELECT * FROM ${resource || 'table_name'} WHERE id > 10 LIMIT 50${schema ? '&#x0a;-- You can query any table in this schema without the schema prefix' : ''}"
                 spellcheck="false"
             >${previousQuery || ''}</textarea>
         </div>
         <div class="query-actions">
             <button onclick="executeQuery()">▶ Execute Query</button>
             ${resource ? '<button onclick="refresh()">🔄 Refresh Table</button>' : ''}
-            <span class="query-hint">Ctrl+Enter to execute</span>
+            <span class="query-hint">Ctrl+Enter or Cmd+Enter to execute</span>
         </div>
     </div>
     ` : ''}
