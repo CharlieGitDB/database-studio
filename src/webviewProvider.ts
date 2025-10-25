@@ -76,7 +76,7 @@ export class DataViewerPanel {
                         await this.loadQuery(message.queryId);
                         break;
                     case 'getSavedQueries':
-                        await this.getSavedQueries();
+                        await this.getSavedQueries(message.table);
                         break;
                 }
             },
@@ -484,10 +484,16 @@ export class DataViewerPanel {
         }
     }
 
-    private async getSavedQueries() {
+    private async getSavedQueries(table?: string) {
         try {
             const context = this.connectionManager.getContext();
-            const savedQueries = context.globalState.get<SavedQuery[]>('savedQueries', []);
+            let savedQueries = context.globalState.get<SavedQuery[]>('savedQueries', []);
+
+            // Filter queries by table if a table is specified
+            if (table) {
+                savedQueries = savedQueries.filter(query => query.state.table === table);
+            }
+
             this._panel.webview.postMessage({ command: 'savedQueriesList', queries: savedQueries });
         } catch (error) {
             this.showError(`Failed to get saved queries: ${error}`);
@@ -544,6 +550,10 @@ function switchTab(tabName) {
     }
 }
 
+function toggleSection(titleElement) {
+    titleElement.classList.toggle('collapsed');
+}
+
 function initializeQueryBuilder(tableName, schemaName) {
     queryBuilderState.table = tableName;
     queryBuilderState.schema = schemaName;
@@ -560,7 +570,11 @@ function initializeQueryBuilder(tableName, schemaName) {
         schema: schemaName
     });
 
-    vscode.postMessage({ command: 'getSavedQueries' });
+    // Request saved queries filtered by current table
+    vscode.postMessage({
+        command: 'getSavedQueries',
+        table: tableName
+    });
 }
 
 function renderTables(tables, currentTable) {
@@ -623,6 +637,12 @@ function changeTable() {
         resource: newTable,
         schema: queryBuilderState.schema
     });
+
+    // Request saved queries filtered by new table
+    vscode.postMessage({
+        command: 'getSavedQueries',
+        table: newTable
+    });
 }
 
 function renderColumns(columns) {
@@ -645,8 +665,8 @@ function renderColumns(columns) {
     }
 
     columnsList.innerHTML = columns.map((col, index) => \`
-        <div class="column-item">
-            <input type="checkbox" id="col_\${index}" onchange="toggleColumn(\${index})">
+        <div class="column-item" onclick="toggleColumnByClick(\${index}, event)">
+            <input type="checkbox" id="col_\${index}" onchange="toggleColumn(\${index})" onclick="event.stopPropagation()">
             <div class="column-info">
                 <div class="column-name">
                     \${col.name}
@@ -654,17 +674,17 @@ function renderColumns(columns) {
                     \${col.isForeignKey ? \`<span class="column-badge" title="References \${col.referencedTable}.\${col.referencedColumn}">FK</span>\` : ''}
                 </div>
                 <div class="column-type">\${col.type}\${col.nullable ? ', nullable' : ''}</div>
-            </div>
-            <div class="column-controls" id="controls_\${index}" style="display: none;">
-                <select onchange="setAggregate(\${index}, this.value)">
-                    <option value="NONE">No aggregate</option>
-                    <option value="COUNT">COUNT</option>
-                    <option value="SUM">SUM</option>
-                    <option value="AVG">AVG</option>
-                    <option value="MIN">MIN</option>
-                    <option value="MAX">MAX</option>
-                </select>
-                <input type="text" placeholder="Alias..." onchange="setAlias(\${index}, this.value)">
+                <div class="column-controls" id="controls_\${index}" style="display: none;" onclick="event.stopPropagation()">
+                    <select onchange="setAggregate(\${index}, this.value)">
+                        <option value="NONE">No aggregate</option>
+                        <option value="COUNT">COUNT</option>
+                        <option value="SUM">SUM</option>
+                        <option value="AVG">AVG</option>
+                        <option value="MIN">MIN</option>
+                        <option value="MAX">MAX</option>
+                    </select>
+                    <input type="text" placeholder="Alias..." onchange="setAlias(\${index}, this.value)">
+                </div>
             </div>
         </div>
     \`).join('');
@@ -690,6 +710,15 @@ function toggleColumn(index) {
     }
 
     updateBuilder();
+}
+
+function toggleColumnByClick(index, event) {
+    // Toggle the checkbox programmatically when clicking anywhere on the column item
+    const checkbox = document.getElementById(\`col_\${index}\`);
+    checkbox.checked = !checkbox.checked;
+
+    // Trigger the change event to update the state
+    toggleColumn(index);
 }
 
 function setAggregate(index, aggregate) {
@@ -1096,7 +1125,7 @@ function applyLoadedQuery(query) {
     renderOrderBy();
     updateBuilder();
 
-    alert(\`Loaded query: \${query.name}\`);
+    // Query loaded successfully - no alert needed since it's filtered by table
 }
 
 window.addEventListener('message', event => {
@@ -1307,152 +1336,195 @@ window.addEventListener('message', event => {
             display: block;
         }
         .builder-container {
-            display: flex;
-            flex-direction: column;
-            gap: 15px;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+            font-size: 14px;
         }
         .builder-section {
             border: 1px solid var(--vscode-panel-border);
-            border-radius: 4px;
+            border-radius: 3px;
             background-color: var(--vscode-editor-background);
+            overflow: hidden;
+        }
+        .builder-section.full-width {
+            grid-column: 1 / -1;
         }
         .section-title {
             margin: 0;
-            padding: 10px 15px;
-            background-color: var(--vscode-editor-selectionBackground);
+            padding: 6px 10px;
+            background-color: var(--vscode-sideBar-background);
             border-bottom: 1px solid var(--vscode-panel-border);
             font-size: 14px;
             font-weight: 600;
             display: flex;
             align-items: center;
-            gap: 10px;
+            gap: 8px;
+            cursor: pointer;
+            user-select: none;
+        }
+        .section-title:hover {
+            background-color: var(--vscode-list-hoverBackground);
+        }
+        .section-toggle {
+            font-size: 10px;
+            margin-right: 4px;
+            transition: transform 0.2s;
+        }
+        .section-title.collapsed .section-toggle {
+            transform: rotate(-90deg);
         }
         .section-content {
-            padding: 15px;
+            padding: 8px;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        .section-title.collapsed + .section-content {
+            display: none;
         }
         .columns-list {
             display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-            gap: 10px;
-            margin-top: 10px;
+            grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+            gap: 4px;
         }
         .column-item {
             display: flex;
-            align-items: center;
-            gap: 10px;
-            padding: 8px;
+            align-items: flex-start;
+            gap: 8px;
+            padding: 6px 10px;
             border: 1px solid var(--vscode-input-border);
-            border-radius: 4px;
+            border-radius: 2px;
             background-color: var(--vscode-input-background);
+            font-size: 13px;
+            cursor: pointer;
+            user-select: none;
+        }
+        .column-item:hover {
+            background-color: var(--vscode-list-hoverBackground);
         }
         .column-item input[type="checkbox"] {
-            margin: 0;
+            margin: 3px 0 0 0;
         }
         .column-info {
             flex: 1;
             min-width: 0;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
         }
         .column-name {
             font-weight: 500;
             color: var(--vscode-foreground);
             display: flex;
             align-items: center;
-            gap: 5px;
+            gap: 4px;
+            font-size: 13px;
         }
         .column-type {
-            font-size: 11px;
+            font-size: 12px;
             color: var(--vscode-descriptionForeground);
         }
         .column-badge {
-            font-size: 9px;
+            font-size: 10px;
             padding: 2px 5px;
-            border-radius: 3px;
+            border-radius: 2px;
             background-color: var(--vscode-badge-background);
             color: var(--vscode-badge-foreground);
         }
         .column-controls {
             display: flex;
-            gap: 5px;
+            gap: 6px;
+            align-items: center;
             flex-wrap: wrap;
+            margin-top: 4px;
         }
         .column-controls select,
         .column-controls input {
-            font-size: 11px;
-            padding: 4px;
-            min-width: 80px;
+            font-size: 12px;
+            padding: 4px 6px;
+            min-width: 70px;
+            flex: 1;
+        }
+        .column-controls select {
+            min-width: 110px;
         }
         .filters-list, .joins-list, .orderby-list {
             display: flex;
             flex-direction: column;
-            gap: 10px;
+            gap: 4px;
         }
         .filter-item, .join-item, .orderby-item {
             display: flex;
             align-items: center;
-            gap: 8px;
-            padding: 10px;
+            gap: 6px;
+            padding: 6px 10px;
             border: 1px solid var(--vscode-input-border);
-            border-radius: 4px;
+            border-radius: 2px;
             background-color: var(--vscode-input-background);
             flex-wrap: wrap;
+            font-size: 13px;
         }
         .filter-item select,
         .filter-item input,
         .join-item select,
         .orderby-item select {
-            padding: 6px;
+            padding: 5px 7px;
             background: var(--vscode-dropdown-background);
             color: var(--vscode-dropdown-foreground);
             border: 1px solid var(--vscode-dropdown-border);
-            border-radius: 3px;
-            font-size: 12px;
+            border-radius: 2px;
+            font-size: 13px;
         }
         .filter-item .field-column {
-            min-width: 150px;
+            min-width: 100px;
+            flex: 1;
         }
         .filter-item .field-operator {
-            min-width: 120px;
+            min-width: 80px;
         }
         .filter-item .field-value {
-            flex: 1;
-            min-width: 150px;
+            flex: 2;
+            min-width: 100px;
         }
         .filter-item .field-logic {
-            min-width: 70px;
+            min-width: 60px;
         }
         .remove-btn {
             padding: 4px 8px;
-            background-color: var(--vscode-button-secondaryBackground);
+            background-color: transparent;
             color: var(--vscode-button-secondaryForeground);
-            border: none;
-            border-radius: 3px;
+            border: 1px solid var(--vscode-input-border);
+            border-radius: 2px;
             cursor: pointer;
-            font-size: 11px;
+            font-size: 12px;
         }
         .remove-btn:hover {
-            background-color: var(--vscode-button-secondaryHoverBackground);
+            background-color: var(--vscode-list-hoverBackground);
+            border-color: var(--vscode-focusBorder);
         }
         .action-btn-small {
             padding: 4px 10px;
             background-color: var(--vscode-button-secondaryBackground);
             color: var(--vscode-button-secondaryForeground);
             border: none;
-            border-radius: 3px;
+            border-radius: 2px;
             cursor: pointer;
-            font-size: 11px;
-            margin-left: auto;
+            font-size: 12px;
         }
         .action-btn-small:hover {
             background-color: var(--vscode-button-secondaryHoverBackground);
+        }
+        .action-btn-small.push-right {
+            margin-left: auto;
         }
         .action-btn {
             padding: 6px 12px;
             background-color: var(--vscode-button-background);
             color: var(--vscode-button-foreground);
             border: none;
-            border-radius: 3px;
+            border-radius: 2px;
             cursor: pointer;
-            font-size: 12px;
+            font-size: 13px;
         }
         .action-btn:hover {
             background-color: var(--vscode-button-hoverBackground);
@@ -1463,21 +1535,23 @@ window.addEventListener('message', event => {
         }
         .limit-controls {
             display: flex;
-            gap: 20px;
+            gap: 10px;
             flex-wrap: wrap;
+            align-items: flex-end;
         }
         .control-group {
             display: flex;
             flex-direction: column;
-            gap: 5px;
+            gap: 3px;
         }
         .control-group label {
             font-size: 12px;
             font-weight: 500;
         }
         .control-group input {
-            padding: 6px;
-            width: 150px;
+            padding: 5px 7px;
+            width: 100px;
+            font-size: 13px;
         }
         .sql-preview-section {
             position: sticky;
@@ -1489,21 +1563,21 @@ window.addEventListener('message', event => {
             background-color: var(--vscode-textCodeBlock-background);
             color: var(--vscode-editor-foreground);
             padding: 12px;
-            border-radius: 4px;
+            border-radius: 2px;
             font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
             font-size: 13px;
             white-space: pre-wrap;
             word-break: break-all;
-            max-height: 300px;
+            max-height: 200px;
             overflow-y: auto;
             border: 1px solid var(--vscode-input-border);
         }
         .validation-errors {
-            margin-top: 10px;
-            padding: 10px;
+            margin-top: 8px;
+            padding: 10px 12px;
             background-color: var(--vscode-inputValidation-errorBackground);
             border: 1px solid var(--vscode-inputValidation-errorBorder);
-            border-radius: 4px;
+            border-radius: 2px;
             color: var(--vscode-errorForeground);
             font-size: 12px;
         }
@@ -1513,19 +1587,19 @@ window.addEventListener('message', event => {
         }
         .empty-state {
             color: var(--vscode-descriptionForeground);
-            font-size: 12px;
+            font-size: 13px;
             font-style: italic;
             margin: 0;
         }
         .saved-queries-list {
             display: flex;
             flex-direction: column;
-            gap: 8px;
+            gap: 4px;
         }
         .saved-query-item {
-            padding: 10px;
+            padding: 8px 12px;
             border: 1px solid var(--vscode-input-border);
-            border-radius: 4px;
+            border-radius: 2px;
             background-color: var(--vscode-input-background);
             cursor: pointer;
             transition: background-color 0.2s;
@@ -1539,13 +1613,13 @@ window.addEventListener('message', event => {
             margin-bottom: 4px;
         }
         .saved-query-desc {
-            font-size: 11px;
+            font-size: 12px;
             color: var(--vscode-descriptionForeground);
             margin-bottom: 4px;
         }
         .saved-query-sql {
             font-family: 'Consolas', 'Monaco', monospace;
-            font-size: 10px;
+            font-size: 11px;
             color: var(--vscode-descriptionForeground);
             white-space: nowrap;
             overflow: hidden;
@@ -1677,64 +1751,76 @@ window.addEventListener('message', event => {
     <!-- Query Builder Tab Content -->
     <div id="queryBuilderTab" class="tab-content">
         <div class="builder-container">
-            <!-- Table Selection Section -->
-            <div class="builder-section">
-                <h4 class="section-title">Select Table</h4>
+            <!-- Saved Queries Section -->
+            <div class="builder-section full-width">
+                <h4 class="section-title collapsed" onclick="toggleSection(this)">
+                    <span class="section-toggle">▼</span>
+                    Saved Queries
+                    <button class="action-btn-small push-right" onclick="event.stopPropagation(); saveCurrentQuery()">💾 Save</button>
+                </h4>
                 <div class="section-content">
-                    <div class="info-row" id="builderSchemaInfo" style="display: none; margin-bottom: 10px;">
-                        <strong>Schema:</strong> <span id="builderSchemaName"></span>
-                    </div>
-                    <div class="control-group">
-                        <label for="tableSelector"><strong>Table:</strong></label>
-                        <select id="tableSelector" onchange="changeTable()" style="width: 100%; padding: 8px; font-size: 13px;">
-                            <option value="">Loading tables...</option>
-                        </select>
+                    <div id="savedQueriesList" class="saved-queries-list">
+                        <p class="empty-state">No saved queries</p>
                     </div>
                 </div>
             </div>
 
+            <!-- Table Selection Section -->
+            <div class="builder-section full-width">
+                <h4 class="section-title" onclick="toggleSection(this)">
+                    <span class="section-toggle">▼</span>
+                    Table: <select id="tableSelector" onchange="changeTable()" onclick="event.stopPropagation()" style="padding: 2px 6px; font-size: 12px; margin-left: 6px;">
+                        <option value="">Loading tables...</option>
+                    </select>
+                    <span id="builderSchemaInfo" style="display: none; margin-left: 10px; font-weight: normal; font-size: 11px;">Schema: <strong id="builderSchemaName"></strong></span>
+                </h4>
+            </div>
+
             <!-- Column Selection Section -->
-            <div class="builder-section">
-                <h4 class="section-title">
-                    SELECT Columns
-                    <button class="action-btn-small" onclick="selectAllColumns()">Select All</button>
-                    <button class="action-btn-small" onclick="deselectAllColumns()">Deselect All</button>
+            <div class="builder-section full-width">
+                <h4 class="section-title" onclick="toggleSection(this)">
+                    <span class="section-toggle">▼</span>
+                    Columns
+                    <button class="action-btn-small" onclick="event.stopPropagation(); selectAllColumns()" style="margin-left: 10px;">All</button>
+                    <button class="action-btn-small" onclick="event.stopPropagation(); deselectAllColumns()">None</button>
+                    <label style="font-weight: normal; font-size: 12px; display: flex; align-items: center; gap: 4px;">
+                        <input type="checkbox" id="distinctCheck" onchange="updateBuilder()" onclick="event.stopPropagation()">
+                        DISTINCT
+                    </label>
                 </h4>
                 <div class="section-content">
-                    <label>
-                        <input type="checkbox" id="distinctCheck" onchange="updateBuilder()">
-                        <strong>DISTINCT</strong> - Return only unique rows
-                    </label>
                     <div id="columnsList" class="columns-list"></div>
                 </div>
             </div>
 
             <!-- WHERE Conditions Section -->
             <div class="builder-section">
-                <h4 class="section-title">
-                    WHERE Conditions
-                    <button class="action-btn-small" onclick="addFilter()">+ Add Filter</button>
+                <h4 class="section-title" onclick="toggleSection(this)">
+                    <span class="section-toggle">▼</span>
+                    WHERE
+                    <button class="action-btn-small push-right" onclick="event.stopPropagation(); addFilter()">+ Add</button>
                 </h4>
                 <div class="section-content">
                     <div id="filtersList" class="filters-list">
-                        <p class="empty-state">No filters added. Click "+ Add Filter" to add conditions.</p>
+                        <p class="empty-state">No filters</p>
                     </div>
                 </div>
             </div>
 
             <!-- JOIN Section -->
             <div class="builder-section">
-                <h4 class="section-title">
-                    JOIN Tables
-                    <button class="action-btn-small" onclick="addJoin()">+ Add Join</button>
+                <h4 class="section-title" onclick="toggleSection(this)">
+                    <span class="section-toggle">▼</span>
+                    JOIN
+                    <button class="action-btn-small push-right" onclick="event.stopPropagation(); addJoin()">+ Add</button>
                 </h4>
                 <div class="section-content">
                     <div id="joinsList" class="joins-list">
-                        <p class="empty-state">No joins added. Click "+ Add Join" to join related tables.</p>
+                        <p class="empty-state">No joins</p>
                     </div>
                     <div id="relatedTables" class="related-tables" style="display: none;">
-                        <p style="font-size: 12px; color: var(--vscode-descriptionForeground); margin: 5px 0;">
-                            <strong>Related tables:</strong> <span id="relatedTablesList"></span>
+                        <p style="font-size: 10px; color: var(--vscode-descriptionForeground); margin: 3px 0;">
+                            <strong>Related:</strong> <span id="relatedTablesList"></span>
                         </p>
                     </div>
                 </div>
@@ -1742,28 +1828,32 @@ window.addEventListener('message', event => {
 
             <!-- ORDER BY Section -->
             <div class="builder-section">
-                <h4 class="section-title">
+                <h4 class="section-title" onclick="toggleSection(this)">
+                    <span class="section-toggle">▼</span>
                     ORDER BY
-                    <button class="action-btn-small" onclick="addOrderBy()">+ Add Sort</button>
+                    <button class="action-btn-small push-right" onclick="event.stopPropagation(); addOrderBy()">+ Add</button>
                 </h4>
                 <div class="section-content">
                     <div id="orderByList" class="orderby-list">
-                        <p class="empty-state">No sorting applied. Click "+ Add Sort" to order results.</p>
+                        <p class="empty-state">No sorting</p>
                     </div>
                 </div>
             </div>
 
             <!-- LIMIT/OFFSET Section -->
             <div class="builder-section">
-                <h4 class="section-title">LIMIT & OFFSET</h4>
+                <h4 class="section-title" onclick="toggleSection(this)">
+                    <span class="section-toggle">▼</span>
+                    LIMIT & OFFSET
+                </h4>
                 <div class="section-content">
                     <div class="limit-controls">
                         <div class="control-group">
-                            <label for="limitInput">LIMIT (max rows):</label>
-                            <input type="number" id="limitInput" min="0" step="1" placeholder="No limit" onchange="updateBuilder()">
+                            <label for="limitInput">LIMIT:</label>
+                            <input type="number" id="limitInput" min="0" step="1" placeholder="All" onchange="updateBuilder()">
                         </div>
                         <div class="control-group">
-                            <label for="offsetInput">OFFSET (skip rows):</label>
+                            <label for="offsetInput">OFFSET:</label>
                             <input type="number" id="offsetInput" min="0" step="1" value="0" onchange="updateBuilder()">
                         </div>
                     </div>
@@ -1771,30 +1861,18 @@ window.addEventListener('message', event => {
             </div>
 
             <!-- SQL Preview Section -->
-            <div class="builder-section sql-preview-section">
-                <h4 class="section-title">
+            <div class="builder-section full-width sql-preview-section">
+                <h4 class="section-title" onclick="toggleSection(this)">
+                    <span class="section-toggle">▼</span>
                     SQL Preview
-                    <div style="margin-left: auto; display: flex; gap: 8px;">
-                        <button class="action-btn" onclick="copySQL()">📋 Copy SQL</button>
-                        <button class="action-btn primary-btn" onclick="executeBuilderQuery()">▶ Run Query</button>
+                    <div style="margin-left: auto; display: flex; gap: 6px;">
+                        <button class="action-btn" onclick="event.stopPropagation(); copySQL()">📋 Copy</button>
+                        <button class="action-btn primary-btn" onclick="event.stopPropagation(); executeBuilderQuery()">▶ Run</button>
                     </div>
                 </h4>
                 <div class="section-content">
                     <div id="sqlPreview" class="sql-preview-code"></div>
                     <div id="validationErrors" class="validation-errors" style="display: none;"></div>
-                </div>
-            </div>
-
-            <!-- Saved Queries Section -->
-            <div class="builder-section">
-                <h4 class="section-title">
-                    Saved Queries
-                    <button class="action-btn-small" onclick="saveCurrentQuery()">💾 Save Current</button>
-                </h4>
-                <div class="section-content">
-                    <div id="savedQueriesList" class="saved-queries-list">
-                        <p class="empty-state">No saved queries yet.</p>
-                    </div>
                 </div>
             </div>
         </div>
