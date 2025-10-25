@@ -438,24 +438,32 @@ export class DataViewerPanel {
 
     private async saveQuery(query: SavedQuery) {
         try {
+            console.log('Backend: saveQuery called with:', query);
+
             // Get existing saved queries from global state
             const context = this.connectionManager.getContext();
             const savedQueries = context.globalState.get<SavedQuery[]>('savedQueries', []);
+            console.log('Backend: Current saved queries:', savedQueries.length);
 
             // Add or update the query
             const existingIndex = savedQueries.findIndex(q => q.id === query.id);
             if (existingIndex >= 0) {
+                console.log('Backend: Updating existing query at index', existingIndex);
                 savedQueries[existingIndex] = { ...query, updatedAt: Date.now() };
             } else {
+                console.log('Backend: Adding new query');
                 savedQueries.push({ ...query, createdAt: Date.now(), updatedAt: Date.now() });
             }
 
+            console.log('Backend: Saving queries to global state, total:', savedQueries.length);
             await context.globalState.update('savedQueries', savedQueries);
             vscode.window.showInformationMessage('Query saved successfully');
 
+            console.log('Backend: Sending updated list to webview');
             // Send updated list back to webview
             this._panel.webview.postMessage({ command: 'savedQueriesList', queries: savedQueries });
         } catch (error) {
+            console.error('Backend: Error saving query:', error);
             this.showError(`Failed to save query: ${error}`);
         }
     }
@@ -972,15 +980,44 @@ function executeBuilderQuery() {
 
 function saveCurrentQuery() {
     const sql = document.getElementById('sqlPreview').textContent;
+    console.log('Save query clicked, SQL:', sql);
+
     if (!sql || sql.trim() === '') {
         alert('Please build a query first');
         return;
     }
 
-    const name = prompt('Enter a name for this query:');
-    if (!name) return;
+    // Open modal
+    const modal = document.getElementById('saveQueryModal');
+    modal.classList.add('active');
 
-    const description = prompt('Enter a description (optional):');
+    // Clear previous values
+    document.getElementById('queryNameInput').value = '';
+    document.getElementById('queryDescInput').value = '';
+
+    // Focus on name input
+    setTimeout(() => {
+        document.getElementById('queryNameInput').focus();
+    }, 100);
+}
+
+function closeSaveQueryModal() {
+    const modal = document.getElementById('saveQueryModal');
+    modal.classList.remove('active');
+}
+
+function confirmSaveQuery() {
+    const name = document.getElementById('queryNameInput').value.trim();
+    const description = document.getElementById('queryDescInput').value.trim();
+    const sql = document.getElementById('sqlPreview').textContent;
+
+    console.log('Query name entered:', name);
+    console.log('Query description entered:', description);
+
+    if (!name) {
+        alert('Please enter a query name');
+        return;
+    }
 
     const savedQuery = {
         id: Date.now().toString(),
@@ -992,20 +1029,26 @@ function saveCurrentQuery() {
         updatedAt: Date.now()
     };
 
+    console.log('Sending saveQuery message:', savedQuery);
     vscode.postMessage({
         command: 'saveQuery',
         query: savedQuery
     });
+
+    closeSaveQueryModal();
 }
 
 function renderSavedQueries(queries) {
+    console.log('renderSavedQueries called with:', queries);
     const savedQueriesList = document.getElementById('savedQueriesList');
 
     if (!queries || queries.length === 0) {
+        console.log('No queries to render');
         savedQueriesList.innerHTML = '<p class="empty-state">No saved queries yet.</p>';
         return;
     }
 
+    console.log('Rendering', queries.length, 'queries');
     savedQueriesList.innerHTML = queries.map(query => \`
         <div class="saved-query-item" onclick="loadSavedQuery('\${query.id}')">
             <div class="saved-query-name">\${query.name}</div>
@@ -1518,6 +1561,84 @@ window.addEventListener('message', event => {
             background-color: var(--vscode-textCodeBlock-background);
             border-radius: 4px;
         }
+        /* Modal styles */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: rgba(0, 0, 0, 0.5);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+        }
+        .modal-overlay.active {
+            display: flex;
+        }
+        .modal-content {
+            background-color: var(--vscode-editor-background);
+            border: 1px solid var(--vscode-input-border);
+            border-radius: 6px;
+            padding: 20px;
+            min-width: 400px;
+            max-width: 500px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+        }
+        .modal-header {
+            font-size: 16px;
+            font-weight: 600;
+            margin-bottom: 16px;
+            color: var(--vscode-foreground);
+        }
+        .modal-body {
+            margin-bottom: 16px;
+        }
+        .modal-input {
+            width: 100%;
+            padding: 8px;
+            margin-bottom: 12px;
+            background-color: var(--vscode-input-background);
+            color: var(--vscode-input-foreground);
+            border: 1px solid var(--vscode-input-border);
+            border-radius: 4px;
+            font-size: 13px;
+            box-sizing: border-box;
+        }
+        .modal-input:focus {
+            outline: 1px solid var(--vscode-focusBorder);
+        }
+        .modal-label {
+            display: block;
+            margin-bottom: 4px;
+            font-size: 12px;
+            color: var(--vscode-foreground);
+        }
+        .modal-footer {
+            display: flex;
+            justify-content: flex-end;
+            gap: 8px;
+        }
+        .modal-btn {
+            padding: 6px 14px;
+            border: none;
+            border-radius: 4px;
+            font-size: 13px;
+            cursor: pointer;
+            background-color: var(--vscode-button-secondaryBackground);
+            color: var(--vscode-button-secondaryForeground);
+        }
+        .modal-btn:hover {
+            background-color: var(--vscode-button-secondaryHoverBackground);
+        }
+        .modal-btn.primary {
+            background-color: var(--vscode-button-background);
+            color: var(--vscode-button-foreground);
+        }
+        .modal-btn.primary:hover {
+            background-color: var(--vscode-button-hoverBackground);
+        }
     </style>
 </head>
 <body>
@@ -1963,6 +2084,26 @@ window.addEventListener('message', event => {
             initializeQueryBuilder('${resource}', ${schema ? `'${schema}'` : 'undefined'});
         }
     </script>` : ''}
+
+    <!-- Save Query Modal -->
+    <div id="saveQueryModal" class="modal-overlay" onclick="if(event.target === this) closeSaveQueryModal()">
+        <div class="modal-content">
+            <div class="modal-header">Save Query</div>
+            <div class="modal-body">
+                <label class="modal-label" for="queryNameInput">Query Name *</label>
+                <input type="text" id="queryNameInput" class="modal-input" placeholder="e.g., Get all active users"
+                    onkeydown="if(event.key === 'Enter') confirmSaveQuery(); if(event.key === 'Escape') closeSaveQueryModal();" />
+
+                <label class="modal-label" for="queryDescInput">Description (optional)</label>
+                <input type="text" id="queryDescInput" class="modal-input" placeholder="e.g., Retrieves all users with active status"
+                    onkeydown="if(event.key === 'Enter') confirmSaveQuery(); if(event.key === 'Escape') closeSaveQueryModal();" />
+            </div>
+            <div class="modal-footer">
+                <button class="modal-btn" onclick="closeSaveQueryModal()">Cancel</button>
+                <button class="modal-btn primary" onclick="confirmSaveQuery()">Save</button>
+            </div>
+        </div>
+    </div>
 </body>
 </html>`;
     }
