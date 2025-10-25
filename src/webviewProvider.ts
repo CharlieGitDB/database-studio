@@ -479,6 +479,26 @@ export class DataViewerPanel {
             color: var(--vscode-descriptionForeground);
             margin-left: auto;
         }
+        .results-header {
+            margin-top: 20px;
+            margin-bottom: 10px;
+            padding: 10px;
+            background-color: var(--vscode-editor-selectionBackground);
+            border-left: 3px solid var(--vscode-textLink-foreground);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .results-title {
+            font-size: 14px;
+            font-weight: bold;
+            color: var(--vscode-foreground);
+        }
+        .results-subtitle {
+            font-size: 12px;
+            color: var(--vscode-descriptionForeground);
+            margin-left: 10px;
+        }
     </style>
 </head>
 <body>
@@ -506,9 +526,23 @@ export class DataViewerPanel {
     </div>
     ` : ''}
 
-    <div class="actions">
-        ${!resource ? '' : '<button onclick="refresh()">Refresh</button>'}
+    ${resource ? `
+    <div class="results-header">
+        <div>
+            <span class="results-title">Results: ${schema ? schema + '.' : ''}${resource}</span>
+            <span class="results-subtitle">${data.rows.length} row${data.rows.length !== 1 ? 's' : ''}</span>
+        </div>
+        <button onclick="refresh()">🔄 Refresh</button>
     </div>
+    ` : `
+    <div class="results-header">
+        <div>
+            <span class="results-title">Query Results</span>
+            <span class="results-subtitle">${data.rows.length} row${data.rows.length !== 1 ? 's' : ''}</span>
+        </div>
+    </div>
+    `}
+
     <table>
         <thead>
             <tr>
