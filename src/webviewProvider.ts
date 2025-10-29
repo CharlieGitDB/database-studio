@@ -223,6 +223,26 @@ export class DataViewerPanel {
         }
     }
 
+    private isReadOnlyQuery(query: string): boolean {
+        // Remove comments and normalize whitespace
+        const normalizedQuery = query
+            .replace(/--.*$/gm, '') // Remove single-line comments
+            .replace(/\/\*[\s\S]*?\*\//g, '') // Remove multi-line comments
+            .trim()
+            .toUpperCase();
+
+        // Check if query starts with SELECT, SHOW, DESCRIBE, EXPLAIN, or WITH (for CTEs that end with SELECT)
+        const readOnlyKeywords = ['SELECT', 'SHOW', 'DESCRIBE', 'DESC', 'EXPLAIN', 'WITH'];
+
+        for (const keyword of readOnlyKeywords) {
+            if (normalizedQuery.startsWith(keyword)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private async executeQuery(connectionId: string, query: string, schema?: string) {
         try {
             const client = this.databaseManager.getClient(connectionId);
@@ -231,6 +251,26 @@ export class DataViewerPanel {
             if (!client || !config) {
                 this.showError('Connection not found');
                 return;
+            }
+
+            // Check update protection for SQL databases
+            if (config.updateProtection && (config.type === 'mysql' || config.type === 'postgresql')) {
+                if (!this.isReadOnlyQuery(query)) {
+                    const confirm = await vscode.window.showWarningMessage(
+                        'This query will modify the database. Are you sure you want to execute it?',
+                        { modal: true },
+                        'Execute',
+                        'Cancel'
+                    );
+
+                    if (confirm !== 'Execute') {
+                        this._panel.webview.postMessage({
+                            command: 'queryError',
+                            error: 'Query execution cancelled by user'
+                        });
+                        return;
+                    }
+                }
             }
 
             let data: QueryResult;

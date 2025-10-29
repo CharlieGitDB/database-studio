@@ -120,6 +120,19 @@ export function activate(context: vscode.ExtensionContext) {
             });
         }
 
+        // Ask about update protection for SQL databases
+        let updateProtection = false;
+        if (type === 'mysql' || type === 'postgresql') {
+            const enableProtection = await vscode.window.showQuickPick(
+                ['No', 'Yes'],
+                {
+                    placeHolder: 'Enable update protection? (Will prompt before running UPDATE, INSERT, DELETE queries)',
+                    ignoreFocusOut: true
+                }
+            );
+            updateProtection = enableProtection === 'Yes';
+        }
+
         const config: ConnectionConfig = {
             id: Date.now().toString(),
             name,
@@ -128,7 +141,8 @@ export function activate(context: vscode.ExtensionContext) {
             port,
             username,
             password,
-            database
+            database,
+            updateProtection
         };
 
         await connectionManager.addConnection(config);
@@ -229,6 +243,19 @@ export function activate(context: vscode.ExtensionContext) {
                 }
             }
 
+            // Ask about update protection for SQL databases
+            let updateProtection = existingConfig.updateProtection || false;
+            if (existingConfig.type === 'mysql' || existingConfig.type === 'postgresql') {
+                const enableProtection = await vscode.window.showQuickPick(
+                    ['No', 'Yes'],
+                    {
+                        placeHolder: 'Enable update protection? (Will prompt before running UPDATE, INSERT, DELETE queries)',
+                        ignoreFocusOut: true
+                    }
+                );
+                updateProtection = enableProtection === 'Yes';
+            }
+
             const updatedConfig: ConnectionConfig = {
                 id: existingConfig.id,
                 name,
@@ -237,7 +264,8 @@ export function activate(context: vscode.ExtensionContext) {
                 port,
                 username,
                 password,
-                database
+                database,
+                updateProtection
             };
 
             await connectionManager.updateConnection(updatedConfig);
