@@ -2,6 +2,17 @@
 
 All notable changes to the "Database Studio by Reswob" extension will be documented in this file.
 
+## [1.0.2] - 2025-11-04
+
+### Improved
+- Increased sidebar icon size for better visibility and consistency with other VS Code icons
+- Applied consistent UX improvements to SQL webviews (MySQL, PostgreSQL)
+- Standardized top padding to 5px across all webview types for efficient screen space usage
+
+### Fixed
+- Renamed `prod-package` script to `create-vsix` for clarity
+- Fixed syntax error in package.json scripts section
+
 ## [1.0.1] - 2025-11-03
 
 ### Fixed
