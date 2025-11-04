@@ -1,6 +1,6 @@
-# Database Client GUI
+# Database Studio by Reswob
 
-A VS Code extension that provides a GUI for managing Redis, MySQL, PostgreSQL, and MongoDB databases with easy view, edit, and delete operations.
+A professional VS Code extension that provides a comprehensive database management studio for Redis, MySQL, PostgreSQL, and MongoDB with visual query builder and intuitive data management.
 
 ## Features
 
@@ -36,7 +36,7 @@ A VS Code extension that provides a GUI for managing Redis, MySQL, PostgreSQL, a
 
 ### Basic Database Operations
 
-1. **Add Connection**: Click the '+' icon in the Database Client view
+1. **Add Connection**: Click the '+' icon in the Database Studio view
 2. **Connect**: Click the plug icon on a connection to connect
 3. **View Data**: Click on a connection to see databases/tables, then click 'View Data' to browse
 4. **Edit**: Click 'Edit' on any row in the data viewer

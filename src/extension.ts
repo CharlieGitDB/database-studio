@@ -6,7 +6,7 @@ import { DataViewerPanel } from './webviewProvider';
 import { ConnectionConfig, DatabaseType } from './types';
 
 export function activate(context: vscode.ExtensionContext) {
-    console.log('Database Client GUI extension is now active');
+    console.log('Database Studio by Reswob extension is now active');
 
     const connectionManager = new ConnectionManager(context);
     const databaseManager = new DatabaseManager();
@@ -413,5 +413,5 @@ export function activate(context: vscode.ExtensionContext) {
 }
 
 export function deactivate() {
-    console.log('Database Client GUI extension deactivated');
+    console.log('Database Studio by Reswob extension deactivated');
 }
