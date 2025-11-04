@@ -2,6 +2,7 @@
 const vscode = acquireVsCodeApi();
 let data = { columns: [], rows: [] };
 let connectionId = '';
+let connectionName = '';
 let resource = '';
 let schema = '';
 let currentEditRow = null;
@@ -50,6 +51,7 @@ function initEditor(id, readOnly = false) {
 function initializeView(initData) {
     data = initData.data;
     connectionId = initData.connectionId;
+    connectionName = initData.connectionName || connectionId;
     resource = initData.resource;
     schema = initData.schema || '';
 
@@ -57,8 +59,8 @@ function initializeView(initData) {
     document.getElementById('loadingMessage').style.display = 'none';
     document.getElementById('mainContent').style.display = 'block';
 
-    // Update header
-    document.getElementById('headerTitle').textContent = '📊 ' + resource;
+    // Update header with connection name and resource
+    document.getElementById('headerTitle').textContent = connectionName + ' > ' + resource;
     document.getElementById('docCount').textContent = data.rows.length;
     document.getElementById('fieldCount').textContent = data.columns.length;
 

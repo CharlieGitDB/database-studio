@@ -9,6 +9,11 @@ All notable changes to the "Database Studio by Reswob" extension will be documen
 - Added extension icon for marketplace and extensions search
 - Optimized package size by excluding node_modules from bundle
 
+### Improved
+- Webview header now displays connection name alongside table/collection name for better context
+- Reduced excessive whitespace at the top of webview for more efficient use of screen space
+- Updated sidebar icon to include "R" branding to match marketplace icon
+
 ## [1.0.0] - 2025-11-03
 
 ### Initial Release

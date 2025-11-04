@@ -1195,7 +1195,9 @@ window.addEventListener('message', event => {
     private getWebviewContent(data: QueryResult, connectionId: string, resource: string, dbType: string, schema?: string, previousQuery?: string): string {
         // Use MongoDB-specific UI for MongoDB databases
         if (dbType === 'mongodb' && resource) {
-            return getMongoDBWebviewContent(this.extensionUri, this._panel.webview, data, connectionId, resource, schema);
+            const config = this.connectionManager.getConnection(connectionId);
+            const connectionName = config?.name || connectionId;
+            return getMongoDBWebviewContent(this.extensionUri, this._panel.webview, data, connectionId, connectionName, resource, schema);
         }
 
         const rows = data.rows.map(row => {

@@ -8,6 +8,7 @@ export function getMongoDBWebviewContent(
     webview: vscode.Webview,
     data: QueryResult,
     connectionId: string,
+    connectionName: string,
     resource: string,
     schema?: string
 ): string {
@@ -52,6 +53,7 @@ export function getMongoDBWebviewContent(
                 rows: formattedRows
             },
             connectionId,
+            connectionName,
             resource,
             schema
         });
