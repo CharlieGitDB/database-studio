@@ -127,12 +127,13 @@
     }
   },
   "scripts": {
-    "vscode:prepublish": "npm run compile",
-    "clean": "node -e \"require('fs').rmSync('out', {recursive:true, force:true})\"",
-    "copy-webviews": "node -e \"const fs=require('fs'),path=require('path'); const src='src/webviews', dest='out/webviews'; fs.mkdirSync(dest,{recursive:true}); fs.readdirSync(src).forEach(f=>{if(f.endsWith('.html')||f.endsWith('.js'))fs.copyFileSync(path.join(src,f),path.join(dest,f))})\"",
-    "compile": "npm run clean && tsc -p ./ && npm run copy-webviews",
-    "watch": "tsc -watch -p ./",
-    "pretest": "npm run compile && npm run lint",
+    "vscode:prepublish": "npm run package",
+    "compile": "node esbuild.js",
+    "watch": "node esbuild.js --watch",
+    "package": "node esbuild.js --production",
+    "compile-tests": "tsc -p . --outDir out",
+    "watch-tests": "tsc -p . -w --outDir out",
+    "pretest": "npm run compile-tests && npm run lint",
     "lint": "eslint src --ext ts",
     "test": "node ./out/test/runTest.js"
   },
@@ -142,6 +143,7 @@
     "@types/vscode": "^1.85.0",
     "@typescript-eslint/eslint-plugin": "^6.0.0",
     "@typescript-eslint/parser": "^6.0.0",
+    "esbuild": "^0.25.12",
     "eslint": "^8.40.0",
     "typescript": "^5.3.0"
   },

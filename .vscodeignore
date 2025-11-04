@@ -10,3 +10,8 @@ vsc-extension-quickstart.md
 **/*.ts
 **/*.md
 .claude/**
+esbuild.js
+.git/**
+.github/**
+.eslintrc.json
+tsconfig.json
