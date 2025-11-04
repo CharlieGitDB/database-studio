@@ -1193,10 +1193,12 @@ window.addEventListener('message', event => {
     }
 
     private getWebviewContent(data: QueryResult, connectionId: string, resource: string, dbType: string, schema?: string, previousQuery?: string): string {
+        // Get connection name for display
+        const config = this.connectionManager.getConnection(connectionId);
+        const connectionName = config?.name || connectionId;
+
         // Use MongoDB-specific UI for MongoDB databases
         if (dbType === 'mongodb' && resource) {
-            const config = this.connectionManager.getConnection(connectionId);
-            const connectionName = config?.name || connectionId;
             return getMongoDBWebviewContent(this.extensionUri, this._panel.webview, data, connectionId, connectionName, resource, schema);
         }
 
@@ -1217,7 +1219,7 @@ window.addEventListener('message', event => {
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/theme/monokai.min.css">
     <style>
         body {
-            padding: 20px;
+            padding: 5px 20px 20px 20px;
             font-family: var(--vscode-font-family);
             color: var(--vscode-foreground);
             background-color: var(--vscode-editor-background);
@@ -1758,7 +1760,7 @@ window.addEventListener('message', event => {
     </style>
 </head>
 <body>
-    <h2>${resource || 'Query Results'}</h2>
+    <h2>${connectionName}${resource ? ' > ' + resource : ''}</h2>
 
     ${dbType !== 'mongodb' && dbType !== 'redis' && resource ? `
     <!-- Tabs -->
