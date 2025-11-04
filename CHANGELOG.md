@@ -2,6 +2,13 @@
 
 All notable changes to the "Database Studio by Reswob" extension will be documented in this file.
 
+## [1.0.1] - 2025-11-03
+
+### Fixed
+- Fixed sidebar icon appearing cut off in VS Code activity bar
+- Added extension icon for marketplace and extensions search
+- Optimized package size by excluding node_modules from bundle
+
 ## [1.0.0] - 2025-11-03
 
 ### Initial Release
