@@ -2,7 +2,7 @@
   "name": "database-studio-reswob",
   "displayName": "Database Studio by Reswob",
   "description": "Professional database management studio for Redis, MySQL, PostgreSQL, and MongoDB with visual query builder",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "publisher": "Reswob",
   "icon": "resources/icon.png",
   "license": "GPL-3.0",

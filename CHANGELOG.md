@@ -2,6 +2,11 @@
 
 All notable changes to the "Database Studio by Reswob" extension will be documented in this file.
 
+## [1.0.3] - 2025-11-05
+
+### Improved
+- Further increased sidebar icon size to match VS Code standard icons for optimal visibility
+
 ## [1.0.2] - 2025-11-04
 
 ### Improved
