@@ -2,6 +2,15 @@
 
 All notable changes to the "Database Studio by Reswob" extension will be documented in this file.
 
+## [1.0.4] - 2025-11-05
+
+### Added
+- Support for multiple database viewer tabs open simultaneously
+- Each viewer tab now displays the resource name in its title for easy identification
+
+### Changed
+- Removed panel reuse logic to allow independent database viewer instances with different queries
+
 ## [1.0.3] - 2025-11-05
 
 ### Improved
