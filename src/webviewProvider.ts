@@ -97,15 +97,10 @@ export class DataViewerPanel {
             ? vscode.window.activeTextEditor.viewColumn
             : undefined;
 
-        if (DataViewerPanel.currentPanel) {
-            DataViewerPanel.currentPanel._panel.reveal(column);
-            DataViewerPanel.currentPanel.loadData(connectionId, resource, schema);
-            return;
-        }
-
+        // Always create a new panel to allow multiple viewers
         const panel = vscode.window.createWebviewPanel(
             'databaseViewer',
-            'Database Viewer',
+            `Database Viewer - ${resource}`,
             column || vscode.ViewColumn.One,
             {
                 enableScripts: true,
