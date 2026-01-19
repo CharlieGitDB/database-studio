@@ -537,7 +537,10 @@ export class DataViewerPanel {
 
     private showError(message: string) {
         vscode.window.showErrorMessage(message);
-        this._panel.webview.html = `<html><body><h2>Error</h2><p>${message}</p></body></html>`;
+        this._panel.webview.postMessage({
+            command: 'showError',
+            message: message
+        });
     }
 
     private getQueryBuilderJSInline(): string {
@@ -1624,6 +1627,33 @@ window.addEventListener('message', event => {
             margin: 5px 0;
             padding-left: 20px;
         }
+        .error-container {
+            margin-top: 20px;
+            padding: 16px;
+            background-color: var(--vscode-inputValidation-errorBackground);
+            border: 1px solid var(--vscode-inputValidation-errorBorder);
+            border-left: 4px solid var(--vscode-errorForeground);
+            border-radius: 4px;
+            color: var(--vscode-errorForeground);
+        }
+        .error-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 12px;
+            font-size: 14px;
+            font-weight: 600;
+        }
+        .error-icon {
+            font-size: 18px;
+        }
+        .error-message {
+            font-size: 13px;
+            color: var(--vscode-foreground);
+            line-height: 1.5;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
         .empty-state {
             color: var(--vscode-descriptionForeground);
             font-size: 13px;
@@ -2146,6 +2176,32 @@ window.addEventListener('message', event => {
             }
         }
 
+        function showErrorInline(errorMessage) {
+            const resultsContainer = document.getElementById('resultsContainer');
+            if (!resultsContainer) {
+                console.error('Results container not found');
+                return;
+            }
+
+            const errorHtml = \`
+                <div class="error-container">
+                    <div class="error-header">
+                        <span class="error-icon">⚠️</span>
+                        <span>Query Execution Error</span>
+                    </div>
+                    <div class="error-message">\${escapeHtml(errorMessage)}</div>
+                </div>
+            \`;
+
+            resultsContainer.innerHTML = errorHtml;
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
         function deleteRow(rowIdx) {
             if (!confirm('Are you sure you want to delete this record?')) {
                 return;
@@ -2190,6 +2246,8 @@ window.addEventListener('message', event => {
 
             if (message.command === 'queryResults') {
                 updateQueryResults(message.columns, message.rows, message.rowCount);
+            } else if (message.command === 'showError') {
+                showErrorInline(message.message);
             }
         });
 
