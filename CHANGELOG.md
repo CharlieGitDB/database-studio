@@ -2,6 +2,13 @@
 
 All notable changes to the "Database Studio by Reswob" extension will be documented in this file.
 
+## [1.0.5] - 2026-01-19
+
+### Fixed
+- Query error handling now displays errors inline within the results container instead of replacing the entire UI
+- Users can now see their query and error messages simultaneously, allowing immediate fixes and retries
+- Query editor and UI context are preserved when query execution fails
+
 ## [1.0.4] - 2025-11-05
 
 ### Added
