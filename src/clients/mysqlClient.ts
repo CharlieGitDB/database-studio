@@ -1,5 +1,5 @@
 import * as mysql from 'mysql2/promise';
-import { ConnectionConfig, QueryResult, ColumnInfo } from '../types';
+import { ConnectionConfig, QueryResult, ColumnInfo, ConstraintInfo, IndexInfo, TriggerInfo } from '../types';
 
 export class MySQLClient {
     private connection: mysql.Connection | null = null;
@@ -154,5 +154,104 @@ export class MySQLClient {
                 referencedColumn: fk?.column
             };
         });
+    }
+
+    async getConstraints(tableName: string, database?: string): Promise<ConstraintInfo[]> {
+        if (!this.connection) {
+            throw new Error('Not connected');
+        }
+
+        const dbName = database || (this.connection as any).config.database;
+
+        const query = `
+            SELECT
+                tc.CONSTRAINT_NAME as constraint_name,
+                tc.CONSTRAINT_TYPE as constraint_type,
+                GROUP_CONCAT(DISTINCT kcu.COLUMN_NAME ORDER BY kcu.ORDINAL_POSITION) as columns,
+                kcu.REFERENCED_TABLE_NAME as referenced_table,
+                GROUP_CONCAT(DISTINCT kcu.REFERENCED_COLUMN_NAME ORDER BY kcu.ORDINAL_POSITION) as referenced_columns,
+                cc.CHECK_CLAUSE as check_clause
+            FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS tc
+            LEFT JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE kcu
+                ON tc.CONSTRAINT_NAME = kcu.CONSTRAINT_NAME
+                AND tc.TABLE_SCHEMA = kcu.TABLE_SCHEMA
+                AND tc.TABLE_NAME = kcu.TABLE_NAME
+            LEFT JOIN INFORMATION_SCHEMA.CHECK_CONSTRAINTS cc
+                ON tc.CONSTRAINT_NAME = cc.CONSTRAINT_NAME
+                AND tc.CONSTRAINT_SCHEMA = cc.CONSTRAINT_SCHEMA
+            WHERE tc.TABLE_SCHEMA = ?
+                AND tc.TABLE_NAME = ?
+            GROUP BY tc.CONSTRAINT_NAME, tc.CONSTRAINT_TYPE, kcu.REFERENCED_TABLE_NAME, cc.CHECK_CLAUSE
+            ORDER BY tc.CONSTRAINT_TYPE, tc.CONSTRAINT_NAME
+        `;
+
+        const [rows] = await this.connection.query(query, [dbName, tableName]);
+
+        return (rows as any[]).map((row: any) => ({
+            name: row.constraint_name,
+            type: row.constraint_type as ConstraintInfo['type'],
+            columns: row.columns ? row.columns.split(',') : [],
+            definition: row.check_clause,
+            referencedTable: row.referenced_table,
+            referencedColumns: row.referenced_columns ? row.referenced_columns.split(',') : undefined
+        }));
+    }
+
+    async getIndexes(tableName: string, database?: string): Promise<IndexInfo[]> {
+        if (!this.connection) {
+            throw new Error('Not connected');
+        }
+
+        const dbName = database || (this.connection as any).config.database;
+
+        // Use SHOW INDEX and group by Key_name
+        const [rows] = await this.connection.query(`SHOW INDEX FROM \`${dbName}\`.\`${tableName}\``);
+
+        // Group by index name
+        const indexMap = new Map<string, IndexInfo>();
+        for (const row of rows as any[]) {
+            const indexName = row.Key_name;
+            if (!indexMap.has(indexName)) {
+                indexMap.set(indexName, {
+                    name: indexName,
+                    columns: [],
+                    isUnique: row.Non_unique === 0,
+                    isPrimary: indexName === 'PRIMARY',
+                    type: row.Index_type
+                });
+            }
+            indexMap.get(indexName)!.columns.push(row.Column_name);
+        }
+
+        return Array.from(indexMap.values());
+    }
+
+    async getTriggers(tableName: string, database?: string): Promise<TriggerInfo[]> {
+        if (!this.connection) {
+            throw new Error('Not connected');
+        }
+
+        const dbName = database || (this.connection as any).config.database;
+
+        const query = `
+            SELECT
+                TRIGGER_NAME as name,
+                EVENT_MANIPULATION as event,
+                ACTION_TIMING as timing,
+                ACTION_STATEMENT as definition
+            FROM INFORMATION_SCHEMA.TRIGGERS
+            WHERE EVENT_OBJECT_SCHEMA = ?
+                AND EVENT_OBJECT_TABLE = ?
+            ORDER BY TRIGGER_NAME
+        `;
+
+        const [rows] = await this.connection.query(query, [dbName, tableName]);
+
+        return (rows as any[]).map((row: any) => ({
+            name: row.name,
+            event: row.event,
+            timing: row.timing,
+            definition: row.definition
+        }));
     }
 }
