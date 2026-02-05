@@ -2,6 +2,16 @@
 
 All notable changes to the "Database Studio by Reswob" extension will be documented in this file.
 
+## [1.0.6] - 2026-02-04
+
+### Added
+- Expandable table nodes in sidebar for PostgreSQL and MySQL databases
+- Tables now show metadata folders: Columns, Constraints, Indexes, Rules (PostgreSQL only), and Triggers
+- Column details display type, nullability, and key information (PK, FK with references)
+- Constraint items show type-specific icons (key for PK, references for FK, shield for UNIQUE, check for CHECK)
+- Index items display index type (btree, hash), uniqueness, and primary status
+- Trigger items show timing (BEFORE/AFTER) and event type (INSERT/UPDATE/DELETE)
+
 ## [1.0.5] - 2026-01-19
 
 ### Fixed
