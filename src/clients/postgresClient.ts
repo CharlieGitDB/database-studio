@@ -1,5 +1,5 @@
 import { Client } from 'pg';
-import { ConnectionConfig, QueryResult, ColumnInfo } from '../types';
+import { ConnectionConfig, QueryResult, ColumnInfo, ConstraintInfo, IndexInfo, RuleInfo, TriggerInfo } from '../types';
 
 export class PostgresClient {
     private client: Client | null = null;
@@ -204,5 +204,146 @@ export class PostgresClient {
                 referencedColumn: fk?.column
             };
         });
+    }
+
+    async getConstraints(tableName: string, schema: string = 'public'): Promise<ConstraintInfo[]> {
+        if (!this.client) {
+            throw new Error('Not connected');
+        }
+
+        const query = `
+            SELECT tc.constraint_name, tc.constraint_type,
+                   array_agg(DISTINCT kcu.column_name ORDER BY kcu.column_name) as columns,
+                   ccu.table_name as foreign_table,
+                   array_agg(DISTINCT ccu.column_name) FILTER (WHERE tc.constraint_type = 'FOREIGN KEY') as foreign_columns,
+                   cc.check_clause
+            FROM information_schema.table_constraints tc
+            LEFT JOIN information_schema.key_column_usage kcu
+                ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema
+            LEFT JOIN information_schema.constraint_column_usage ccu
+                ON tc.constraint_name = ccu.constraint_name AND tc.constraint_type = 'FOREIGN KEY'
+            LEFT JOIN information_schema.check_constraints cc
+                ON tc.constraint_name = cc.constraint_name
+            WHERE tc.table_schema = $1 AND tc.table_name = $2
+            GROUP BY tc.constraint_name, tc.constraint_type, ccu.table_name, cc.check_clause
+            ORDER BY tc.constraint_type, tc.constraint_name
+        `;
+
+        const result = await this.client.query(query, [schema, tableName]);
+
+        return result.rows.map((row: any) => ({
+            name: row.constraint_name,
+            type: row.constraint_type as ConstraintInfo['type'],
+            columns: this.parseArrayColumn(row.columns),
+            definition: row.check_clause,
+            referencedTable: row.foreign_table,
+            referencedColumns: row.foreign_columns ? this.parseArrayColumn(row.foreign_columns) : undefined
+        }));
+    }
+
+    private parseArrayColumn(value: any): string[] {
+        if (!value) {
+            return [];
+        }
+        if (Array.isArray(value)) {
+            return value.filter((c: string | null) => c !== null);
+        }
+        // Handle PostgreSQL array string format like {col1,col2}
+        if (typeof value === 'string' && value.startsWith('{') && value.endsWith('}')) {
+            const inner = value.slice(1, -1);
+            if (inner === '') {
+                return [];
+            }
+            return inner.split(',').map(s => s.trim()).filter(s => s !== '' && s !== 'NULL');
+        }
+        return [];
+    }
+
+    async getIndexes(tableName: string, schema: string = 'public'): Promise<IndexInfo[]> {
+        if (!this.client) {
+            throw new Error('Not connected');
+        }
+
+        const query = `
+            SELECT i.relname as index_name,
+                   array_agg(a.attname ORDER BY array_position(ix.indkey, a.attnum)) as columns,
+                   ix.indisunique as is_unique, ix.indisprimary as is_primary, am.amname as index_type
+            FROM pg_index ix
+            JOIN pg_class i ON ix.indexrelid = i.oid
+            JOIN pg_class t ON ix.indrelid = t.oid
+            JOIN pg_namespace n ON t.relnamespace = n.oid
+            JOIN pg_am am ON i.relam = am.oid
+            JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY(ix.indkey)
+            WHERE n.nspname = $1 AND t.relname = $2
+            GROUP BY i.relname, ix.indisunique, ix.indisprimary, am.amname
+            ORDER BY i.relname
+        `;
+
+        const result = await this.client.query(query, [schema, tableName]);
+
+        return result.rows.map((row: any) => ({
+            name: row.index_name,
+            columns: this.parseArrayColumn(row.columns),
+            isUnique: row.is_unique,
+            isPrimary: row.is_primary,
+            type: row.index_type
+        }));
+    }
+
+    async getRules(tableName: string, schema: string = 'public'): Promise<RuleInfo[]> {
+        if (!this.client) {
+            throw new Error('Not connected');
+        }
+
+        const query = `
+            SELECT r.rulename as name,
+                   CASE r.ev_type WHEN '1' THEN 'SELECT' WHEN '2' THEN 'UPDATE'
+                                  WHEN '3' THEN 'INSERT' WHEN '4' THEN 'DELETE' END as event,
+                   pg_get_ruledef(r.oid) as definition
+            FROM pg_rewrite r
+            JOIN pg_class c ON r.ev_class = c.oid
+            JOIN pg_namespace n ON c.relnamespace = n.oid
+            WHERE n.nspname = $1 AND c.relname = $2 AND r.rulename != '_RETURN'
+            ORDER BY r.rulename
+        `;
+
+        const result = await this.client.query(query, [schema, tableName]);
+
+        return result.rows.map((row: any) => ({
+            name: row.name,
+            event: row.event,
+            definition: row.definition
+        }));
+    }
+
+    async getTriggers(tableName: string, schema: string = 'public'): Promise<TriggerInfo[]> {
+        if (!this.client) {
+            throw new Error('Not connected');
+        }
+
+        const query = `
+            SELECT t.tgname as name,
+                   CASE WHEN t.tgtype & 2 = 2 THEN 'BEFORE'
+                        WHEN t.tgtype & 64 = 64 THEN 'INSTEAD OF' ELSE 'AFTER' END as timing,
+                   CONCAT_WS(' OR ',
+                       CASE WHEN t.tgtype & 4 = 4 THEN 'INSERT' END,
+                       CASE WHEN t.tgtype & 8 = 8 THEN 'DELETE' END,
+                       CASE WHEN t.tgtype & 16 = 16 THEN 'UPDATE' END) as event,
+                   pg_get_triggerdef(t.oid) as definition
+            FROM pg_trigger t
+            JOIN pg_class c ON t.tgrelid = c.oid
+            JOIN pg_namespace n ON c.relnamespace = n.oid
+            WHERE n.nspname = $1 AND c.relname = $2 AND NOT t.tgisinternal
+            ORDER BY t.tgname
+        `;
+
+        const result = await this.client.query(query, [schema, tableName]);
+
+        return result.rows.map((row: any) => ({
+            name: row.name,
+            timing: row.timing,
+            event: row.event,
+            definition: row.definition
+        }));
     }
 }
