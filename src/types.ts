@@ -45,6 +45,38 @@ export interface ColumnInfo {
     referencedColumn?: string;
 }
 
+export interface ConstraintInfo {
+    name: string;
+    type: 'PRIMARY KEY' | 'FOREIGN KEY' | 'UNIQUE' | 'CHECK';
+    columns: string[];
+    definition?: string;
+    referencedTable?: string;
+    referencedColumns?: string[];
+}
+
+export interface IndexInfo {
+    name: string;
+    columns: string[];
+    isUnique: boolean;
+    isPrimary: boolean;
+    type?: string;  // btree, hash, etc.
+}
+
+export interface RuleInfo {
+    name: string;
+    event: string;
+    definition: string;
+}
+
+export interface TriggerInfo {
+    name: string;
+    event: string;
+    timing: string;
+    definition?: string;
+}
+
+export type MetadataFolderType = 'columns' | 'constraints' | 'indexes' | 'rules' | 'triggers';
+
 export interface SelectColumn {
     column: string;
     alias?: string;
