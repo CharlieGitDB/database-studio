@@ -3,6 +3,11 @@
 All notable changes to the "Database Studio by Reswob" extension will be documented in this file.
 
 
+## [1.1.2] - 2026-03-05
+
+### Fixed
+- Fixed connection form and MongoDB webview panels failing to open in packaged extension (ENOENT error on webview HTML/JS assets)
+
 ## [1.1.1] - 2026-03-05
 
 ### Fixed
