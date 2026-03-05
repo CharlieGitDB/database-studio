@@ -78,6 +78,9 @@ export class DataViewerPanel {
                     case 'getSavedQueries':
                         await this.getSavedQueries(message.table);
                         break;
+                    case 'getSchemaInfo':
+                        await this.sendSchemaInfo(message.connectionId, message.schema);
+                        break;
                 }
             },
             null,
@@ -453,6 +456,25 @@ export class DataViewerPanel {
             this._panel.webview.postMessage({ command: 'tablesData', tables });
         } catch (error) {
             this.showError(`Failed to get tables: ${error}`);
+        }
+    }
+
+    private async sendSchemaInfo(connectionId: string, schema?: string) {
+        try {
+            const result = await this.databaseManager.getSchemaInfo(connectionId, schema);
+            this._panel.webview.postMessage({
+                command: 'schemaInfo',
+                schemaInfo: result.tables,
+                schemas: result.schemas || [],
+                schemaTablesMap: result.schemaTablesMap || {},
+                schemaDbType: result.dbType
+            });
+        } catch (error) {
+            console.error(`Failed to get schema info: ${error}`);
+            this._panel.webview.postMessage({
+                command: 'schemaInfoError',
+                message: `Failed to load schema info: ${error instanceof Error ? error.message : String(error)}`
+            });
         }
     }
 
@@ -1215,6 +1237,7 @@ window.addEventListener('message', event => {
     <title>Database Viewer</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/codemirror.min.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/theme/monokai.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/addon/hint/show-hint.min.css">
     <style>
         body {
             padding: 5px 20px 20px 20px;
@@ -1813,6 +1836,7 @@ window.addEventListener('message', event => {
                 <button onclick="executeQuery()">▶ Execute Query</button>
                 ${resource ? '<button onclick="refresh()">🔄 Refresh Table</button>' : ''}
                 <span class="query-hint">Ctrl+Enter or Cmd+Enter to execute</span>
+                <span id="schemaStatus" style="margin-left: 12px; font-size: 11px; color: var(--vscode-descriptionForeground);"></span>
             </div>
         </div>
     </div>
@@ -1963,6 +1987,7 @@ window.addEventListener('message', event => {
         <div class="query-actions">
             <button onclick="executeQuery()">▶ Execute Query</button>
             <span class="query-hint">Ctrl+Enter or Cmd+Enter to execute</span>
+            <span id="schemaStatus" style="margin-left: 12px; font-size: 11px; color: var(--vscode-descriptionForeground);"></span>
         </div>
     </div>
     ` : ''}
@@ -2016,6 +2041,8 @@ window.addEventListener('message', event => {
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/codemirror.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/mode/sql/sql.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/addon/hint/show-hint.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/addon/hint/sql-hint.min.js"></script>
     <script>
         const vscode = acquireVsCodeApi();
         const data = ${JSON.stringify({ columns: data.columns, rows })};
@@ -2027,9 +2054,320 @@ window.addEventListener('message', event => {
         let editor = null;
 
         // Initialize CodeMirror only for SQL databases
+        let schemaMap = {};
+        let pgSchemas = [];
+        let pgSchemaTablesMap = {};
+        let schemaDbType = dbType;
         if (dbType !== 'mongodb' && dbType !== 'redis') {
             const sqlQueryElement = document.getElementById('sqlQuery');
             if (sqlQueryElement) {
+
+                // Keywords after which we should suggest table names (or schemas for postgres)
+                const TABLE_CONTEXT_KEYWORDS = ['FROM', 'JOIN', 'INNER JOIN', 'LEFT JOIN',
+                    'RIGHT JOIN', 'FULL JOIN', 'CROSS JOIN', 'NATURAL JOIN', 'INTO',
+                    'UPDATE', 'TABLE', 'TRUNCATE'];
+
+                // Keywords after which we should suggest column names
+                const COLUMN_CONTEXT_KEYWORDS = ['SELECT', 'WHERE', 'AND', 'OR', 'ON',
+                    'SET', 'ORDER BY', 'GROUP BY', 'HAVING', 'BY', 'BETWEEN', 'LIKE'];
+
+                // Strip surrounding double-quotes from identifiers ("public" → public)
+                function unquote(name) {
+                    if (name && name.length >= 2 && name.startsWith('"') && name.endsWith('"')) {
+                        return name.slice(1, -1);
+                    }
+                    return name || '';
+                }
+
+                // Extract referenced tables and aliases from a SQL query
+                // Supports: FROM schema.table alias, FROM "schema"."table" AS alias, JOIN table alias, etc.
+                function getQueryTables(queryText) {
+                    const tables = [];
+                    const aliasMap = {};
+                    // Matches: FROM/JOIN/UPDATE/INTO followed by optional schema.table (with optional quotes), optional alias
+                    const pattern = /\\b(?:FROM|JOIN|UPDATE|INTO)\\s+("?[a-zA-Z_][a-zA-Z0-9_]*"?(?:\\s*\\.\\s*"?[a-zA-Z_][a-zA-Z0-9_]*"?)?)(?:\\s+(?:AS\\s+)?([a-zA-Z_][a-zA-Z0-9_]*))?/gi;
+                    const skipWords = new Set(['SET','SELECT','WHERE','VALUES','JOIN','ON','AND','OR',
+                        'INNER','LEFT','RIGHT','FULL','CROSS','NATURAL','ORDER','GROUP',
+                        'HAVING','LIMIT','UNION','INTO','UPDATE','FROM']);
+                    let match;
+                    while ((match = pattern.exec(queryText)) !== null) {
+                        const rawRef = match[1].replace(/\\s/g, ''); // remove spaces around dot
+                        const alias = match[2];
+                        if (skipWords.has(rawRef.toUpperCase())) continue;
+                        // Split on dot to handle schema.table
+                        const parts = rawRef.split('.').map(unquote);
+                        const plainTable = parts[parts.length - 1];
+                        const fullRef = parts.join('.');
+                        if (!tables.includes(plainTable)) tables.push(plainTable);
+                        if (parts.length > 1 && !tables.includes(fullRef)) tables.push(fullRef);
+                        if (alias && !skipWords.has(alias.toUpperCase())) {
+                            aliasMap[alias] = plainTable;
+                        }
+                    }
+                    return { tables, aliasMap };
+                }
+
+                // Resolve columns for a table name, checking schemaMap and pgSchemaTablesMap
+                function resolveTableColumns(tableName) {
+                    // Direct lookup in schemaMap (flat table→columns map for current schema)
+                    if (schemaMap[tableName]) return schemaMap[tableName];
+                    // For schema-qualified names (e.g., public.users)
+                    const dotIdx = tableName.indexOf('.');
+                    if (dotIdx >= 0 && pgSchemaTablesMap) {
+                        const sName = tableName.substring(0, dotIdx);
+                        const tName = tableName.substring(dotIdx + 1);
+                        const sTables = pgSchemaTablesMap[sName];
+                        if (sTables && sTables[tName]) return sTables[tName];
+                    }
+                    // Search all schemas for this table (PostgreSQL)
+                    if (pgSchemaTablesMap) {
+                        for (const [, sTables] of Object.entries(pgSchemaTablesMap)) {
+                            if (sTables[tableName]) return sTables[tableName];
+                        }
+                    }
+                    return [];
+                }
+
+                // Get column suggestions from all tables referenced in the query
+                function getColumnsForQueryTables(queryText) {
+                    const { tables, aliasMap } = getQueryTables(queryText);
+                    const results = [];
+                    const seen = new Set();
+                    // Add plain column names from each table
+                    for (const table of tables) {
+                        const cols = resolveTableColumns(table);
+                        const displayTable = table.includes('.') ? table.split('.').pop() : table;
+                        for (const col of cols) {
+                            if (!seen.has(col)) {
+                                seen.add(col);
+                                results.push({ text: col, displayText: col + '  (' + displayTable + ')' });
+                            }
+                        }
+                    }
+                    // Add table-qualified columns (table.col) so users can pick them
+                    for (const table of tables) {
+                        if (table.includes('.')) continue; // skip schema.table for qualified cols
+                        const cols = resolveTableColumns(table);
+                        for (const col of cols) {
+                            const qualified = table + '.' + col;
+                            if (!seen.has(qualified)) {
+                                seen.add(qualified);
+                                results.push({ text: qualified, displayText: qualified });
+                            }
+                        }
+                    }
+                    // Add alias-qualified columns (alias.col)
+                    for (const [alias, table] of Object.entries(aliasMap)) {
+                        const cols = resolveTableColumns(table);
+                        for (const col of cols) {
+                            const aq = alias + '.' + col;
+                            if (!seen.has(aq)) {
+                                seen.add(aq);
+                                results.push({ text: aq, displayText: aq + '  (' + table + ')' });
+                            }
+                        }
+                    }
+                    // Also suggest table names and aliases so the user can type table. to drill into columns
+                    for (const table of tables) {
+                        if (!table.includes('.') && !seen.has(table)) {
+                            seen.add(table);
+                            results.push({ text: table, displayText: table + '  (table)' });
+                        }
+                    }
+                    for (const alias of Object.keys(aliasMap)) {
+                        if (!seen.has(alias)) {
+                            seen.add(alias);
+                            results.push({ text: alias, displayText: alias + '  (alias)' });
+                        }
+                    }
+                    return results;
+                }
+
+                // Build the text before the cursor by iterating cm.getLine() (avoids escaping issues)
+                function getTextBeforeCursor(cm) {
+                    const cursor = cm.getCursor();
+                    const parts = [];
+                    for (let i = 0; i < cursor.line; i++) {
+                        parts.push(cm.getLine(i));
+                    }
+                    parts.push(cm.getLine(cursor.line).substring(0, cursor.ch));
+                    return parts.join(' ');
+                }
+
+                // Determine SQL context: 'table' after FROM/JOIN, 'column' after SELECT/WHERE, or 'general'
+                function getSQLContext(cm) {
+                    const textBefore = getTextBeforeCursor(cm);
+                    const tokens = textBefore.toUpperCase().trim().split(/\\s+/);
+                    // Check last few tokens for compound keywords (e.g., "ORDER BY", "LEFT JOIN")
+                    for (let i = tokens.length - 1; i >= Math.max(0, tokens.length - 3); i--) {
+                        const compound = (tokens[i - 1] || '') + ' ' + tokens[i];
+                        if (TABLE_CONTEXT_KEYWORDS.includes(compound)) return 'table';
+                        if (COLUMN_CONTEXT_KEYWORDS.includes(compound)) return 'column';
+                    }
+                    // Check single keywords
+                    for (let i = tokens.length - 1; i >= Math.max(0, tokens.length - 2); i--) {
+                        if (TABLE_CONTEXT_KEYWORDS.includes(tokens[i])) return 'table';
+                        if (COLUMN_CONTEXT_KEYWORDS.includes(tokens[i])) return 'column';
+                    }
+                    return 'general';
+                }
+
+                function hybridSQLHint(cm, options) {
+                    const cursor = cm.getCursor();
+                    const line = cm.getLine(cursor.line);
+                    let end = cursor.ch;
+                    let start = end;
+                    // Expand the current word to include identifiers, dots, and quoted segments
+                    while (start > 0 && /[a-zA-Z0-9_."']/.test(line.charAt(start - 1))) {
+                        start--;
+                    }
+                    const currentWord = line.substring(start, end);
+                    const lowerWord = currentWord.toLowerCase();
+
+                    // --- Dot-access handling ---
+                    const dotIndex = currentWord.lastIndexOf('.');
+                    if (dotIndex >= 0) {
+                        const rawPrefix = currentWord.substring(0, dotIndex);
+                        const afterDot = unquote(currentWord.substring(dotIndex + 1)).toLowerCase();
+                        const prefix = unquote(rawPrefix.replace(/"/g, '').trim());
+                        const fullText = cm.getValue();
+                        const { aliasMap } = getQueryTables(fullText);
+
+                        // Check if prefix contains a dot already (schema.table.col)
+                        const innerDot = rawPrefix.replace(/"/g, '').indexOf('.');
+                        if (innerDot >= 0) {
+                            // Two dots: schema.table. → suggest columns
+                            const schemaPart = rawPrefix.substring(0, rawPrefix.indexOf('.')).replace(/"/g, '').trim();
+                            const tablePart = rawPrefix.substring(rawPrefix.indexOf('.') + 1).replace(/"/g, '').trim();
+                            const sTables = pgSchemaTablesMap && pgSchemaTablesMap[schemaPart];
+                            const cols = (sTables && sTables[tablePart]) || [];
+                            return {
+                                list: cols
+                                    .filter(c => c.toLowerCase().startsWith(afterDot))
+                                    .map(c => ({ text: schemaPart + '.' + tablePart + '.' + c, displayText: c })),
+                                from: CodeMirror.Pos(cursor.line, start),
+                                to: CodeMirror.Pos(cursor.line, end)
+                            };
+                        }
+
+                        // For PostgreSQL: check if prefix is a schema name → suggest tables
+                        if (schemaDbType === 'postgresql' && pgSchemaTablesMap && pgSchemaTablesMap[prefix]) {
+                            const schemaTables = Object.keys(pgSchemaTablesMap[prefix]);
+                            return {
+                                list: schemaTables
+                                    .filter(t => t.toLowerCase().startsWith(afterDot))
+                                    .map(t => ({ text: prefix + '.' + t, displayText: t + '  (table)' })),
+                                from: CodeMirror.Pos(cursor.line, start),
+                                to: CodeMirror.Pos(cursor.line, end)
+                            };
+                        }
+
+                        // Single dot: table.col or alias.col
+                        const resolvedTable = aliasMap[prefix] || prefix;
+                        const cols = resolveTableColumns(resolvedTable);
+                        return {
+                            list: cols
+                                .filter(c => c.toLowerCase().startsWith(afterDot))
+                                .map(c => ({ text: prefix + '.' + c, displayText: c })),
+                            from: CodeMirror.Pos(cursor.line, start),
+                            to: CodeMirror.Pos(cursor.line, end)
+                        };
+                    }
+
+                    // --- No dot: context-based suggestions ---
+                    const context = getSQLContext(cm);
+
+                    if (context === 'table') {
+                        const suggestions = [];
+                        const existing = new Set();
+
+                        // PostgreSQL: suggest schemas first so user can type schema.
+                        if (schemaDbType === 'postgresql') {
+                            for (const s of pgSchemas) {
+                                if (s.toLowerCase().startsWith(lowerWord)) {
+                                    suggestions.push({ text: s, displayText: s + '  (schema)' });
+                                    existing.add(s);
+                                }
+                            }
+                        }
+
+                        // Suggest tables from the active schemaMap (current schema)
+                        for (const t of Object.keys(schemaMap)) {
+                            if (t.toLowerCase().startsWith(lowerWord) && !existing.has(t)) {
+                                suggestions.push({ text: t, displayText: t + '  (table)' });
+                                existing.add(t);
+                            }
+                        }
+
+                        // For PostgreSQL: also suggest tables from ALL schemas in pgSchemaTablesMap
+                        // This covers the case where schemaMap (current schema) is empty
+                        if (schemaDbType === 'postgresql' && pgSchemaTablesMap) {
+                            for (const [sName, sTables] of Object.entries(pgSchemaTablesMap)) {
+                                for (const tName of Object.keys(sTables)) {
+                                    // Add unqualified table name if not already present
+                                    if (tName.toLowerCase().startsWith(lowerWord) && !existing.has(tName)) {
+                                        suggestions.push({ text: tName, displayText: tName + '  (' + sName + ')' });
+                                        existing.add(tName);
+                                    }
+                                    // Add schema-qualified table name
+                                    const qualified = sName + '.' + tName;
+                                    if (qualified.toLowerCase().startsWith(lowerWord) && !existing.has(qualified)) {
+                                        suggestions.push({ text: qualified, displayText: qualified + '  (table)' });
+                                        existing.add(qualified);
+                                    }
+                                }
+                            }
+                        }
+
+                        // Merge with sql-hint keywords
+                        const sqlResult = CodeMirror.hint.sql(cm, Object.assign({}, options, { tables: schemaMap })) || { list: [] };
+                        for (const item of sqlResult.list) {
+                            const txt = typeof item === 'string' ? item : item.text;
+                            if (!existing.has(txt)) {
+                                suggestions.push(item);
+                                existing.add(txt);
+                            }
+                        }
+                        return {
+                            list: suggestions,
+                            from: CodeMirror.Pos(cursor.line, start),
+                            to: CodeMirror.Pos(cursor.line, end)
+                        };
+                    }
+
+                    if (context === 'column') {
+                        const fullText = cm.getValue();
+                        const colSuggestions = getColumnsForQueryTables(fullText)
+                            .filter(c => c.text.toLowerCase().startsWith(lowerWord));
+
+                        // After SELECT keyword, suggest * as first option
+                        const textBefore = getTextBeforeCursor(cm).toUpperCase().trim();
+                        if (textBefore.endsWith('SELECT') || /SELECT\\s*$/.test(textBefore)) {
+                            colSuggestions.unshift({ text: '*', displayText: '*  (all columns)' });
+                        }
+
+                        // Merge with sql-hint
+                        const sqlResult = CodeMirror.hint.sql(cm, Object.assign({}, options, { tables: schemaMap })) || { list: [] };
+                        const merged = [...colSuggestions];
+                        const existingSet = new Set(merged.map(s => typeof s === 'string' ? s : s.text));
+                        for (const item of sqlResult.list) {
+                            const txt = typeof item === 'string' ? item : item.text;
+                            if (!existingSet.has(txt)) {
+                                merged.push(item);
+                                existingSet.add(txt);
+                            }
+                        }
+                        return {
+                            list: merged,
+                            from: CodeMirror.Pos(cursor.line, start),
+                            to: CodeMirror.Pos(cursor.line, end)
+                        };
+                    }
+
+                    // General context: delegate to sql-hint (keywords + schema tables)
+                    return CodeMirror.hint.sql(cm, Object.assign({}, options, { tables: schemaMap }));
+                }
+
                 editor = CodeMirror.fromTextArea(sqlQueryElement, {
                     mode: 'text/x-sql',
                     theme: 'monokai',
@@ -2037,15 +2375,34 @@ window.addEventListener('message', event => {
                     lineWrapping: true,
                     indentUnit: 4,
                     smartIndent: true,
+                    hintOptions: {
+                        tables: schemaMap,
+                        completeSingle: false
+                    },
                     extraKeys: {
                         'Ctrl-Enter': function(cm) {
                             executeQuery();
                         },
                         'Cmd-Enter': function(cm) {
                             executeQuery();
+                        },
+                        'Ctrl-Space': function(cm) {
+                            cm.showHint({ hint: hybridSQLHint, completeSingle: false });
                         }
                     }
                 });
+
+                // Auto-trigger hints as the user types
+                editor.on('inputRead', function(instance, changeObj) {
+                    if (changeObj.text && changeObj.text[0] && /[a-zA-Z_."']/.test(changeObj.text[0])) {
+                        instance.showHint({ hint: hybridSQLHint, completeSingle: false });
+                    }
+                });
+
+                // Request schema info from the extension
+                var schemaStatusEl = document.getElementById('schemaStatus');
+                if (schemaStatusEl) { schemaStatusEl.textContent = 'Loading schema info...'; }
+                vscode.postMessage({ command: 'getSchemaInfo', connectionId, schema });
             }
         }
 
@@ -2248,6 +2605,45 @@ window.addEventListener('message', event => {
                 updateQueryResults(message.columns, message.rows, message.rowCount);
             } else if (message.command === 'showError') {
                 showErrorInline(message.message);
+            } else if (message.command === 'schemaInfo') {
+                schemaMap = message.schemaInfo || {};
+                pgSchemas = message.schemas || [];
+                pgSchemaTablesMap = message.schemaTablesMap || {};
+                if (message.schemaDbType) schemaDbType = message.schemaDbType;
+
+                // If schemaMap is empty but pgSchemaTablesMap has data, build a merged table map
+                // so that CodeMirror's built-in sql-hint also has table/column data
+                var effectiveTables = schemaMap;
+                if (Object.keys(schemaMap).length === 0 && pgSchemaTablesMap) {
+                    effectiveTables = {};
+                    for (var sKey in pgSchemaTablesMap) {
+                        var sTbls = pgSchemaTablesMap[sKey];
+                        for (var tKey in sTbls) {
+                            if (!effectiveTables[tKey]) {
+                                effectiveTables[tKey] = sTbls[tKey];
+                            }
+                        }
+                    }
+                }
+
+                if (editor) {
+                    editor.setOption('hintOptions', { tables: effectiveTables, completeSingle: false });
+                }
+                var statusEl = document.getElementById('schemaStatus');
+                if (statusEl) {
+                    var tableCount = Object.keys(effectiveTables).length;
+                    statusEl.textContent = tableCount > 0
+                        ? 'Schema loaded (' + tableCount + ' tables)'
+                        : 'No tables found';
+                    statusEl.style.color = tableCount > 0 ? 'var(--vscode-charts-green, #89d185)' : 'var(--vscode-editorWarning-foreground, #cca700)';
+                    setTimeout(function() { if (statusEl) statusEl.style.opacity = '0.6'; }, 3000);
+                }
+            } else if (message.command === 'schemaInfoError') {
+                var errStatusEl = document.getElementById('schemaStatus');
+                if (errStatusEl) {
+                    errStatusEl.textContent = 'Schema suggestions unavailable';
+                    errStatusEl.style.color = 'var(--vscode-editorWarning-foreground, #cca700)';
+                }
             }
         });
 
