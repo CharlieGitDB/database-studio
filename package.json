@@ -14,6 +14,8 @@
     "vscode": "^1.85.0"
   },
   "categories": [
+    "Data Science",
+    "Visualization",
     "Other"
   ],
   "activationEvents": [
@@ -132,14 +134,17 @@
     "compile": "node esbuild.js",
     "watch": "node esbuild.js --watch",
     "package": "node esbuild.js --production",
-    "create-vsix": "npx @vscode/vsce package",
+    "create-vsix": "npm test && npm version patch --no-git-tag-version && npx @vscode/vsce package",
     "compile-tests": "tsc -p . --outDir out",
     "watch-tests": "tsc -p . -w --outDir out",
     "pretest": "npm run compile-tests && npm run lint",
     "lint": "eslint src --ext ts",
-    "test": "node ./out/test/runTest.js"
+    "test": "jest",
+    "test:coverage": "jest --coverage",
+    "test:vscode": "node ./out/test/runTest.js"
   },
   "devDependencies": {
+    "@types/jest": "^30.0.0",
     "@types/node": "^20.0.0",
     "@types/pg": "^8.15.5",
     "@types/vscode": "^1.85.0",
@@ -147,6 +152,8 @@
     "@typescript-eslint/parser": "^6.0.0",
     "esbuild": "^0.25.12",
     "eslint": "^8.40.0",
+    "jest": "^30.2.0",
+    "ts-jest": "^29.4.6",
     "typescript": "^5.3.0"
   },
   "dependencies": {
