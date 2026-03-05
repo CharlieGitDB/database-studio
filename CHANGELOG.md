@@ -2,6 +2,13 @@
 
 All notable changes to the "Database Studio by Reswob" extension will be documented in this file.
 
+
+## [1.1.1] - 2026-03-05
+
+### Fixed
+- Redis data preview no longer shows "Table listing not supported for this database type" error
+- Defensive handling for unsupported table/column introspection in non-SQL databases
+
 ## [1.1.0] - 2026-03-05
 
 

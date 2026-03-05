@@ -423,7 +423,8 @@ export class DataViewerPanel {
             } else if (client instanceof MySQLClient) {
                 columns = await client.getColumns(resource);
             } else {
-                this.showError('Column introspection not supported for this database type');
+                // Redis and other non-SQL databases don't have columns
+                this._panel.webview.postMessage({ command: 'columnsData', columns: [] });
                 return;
             }
 
@@ -449,7 +450,8 @@ export class DataViewerPanel {
             } else if (client instanceof MySQLClient) {
                 tables = await client.getTables();
             } else {
-                this.showError('Table listing not supported for this database type');
+                // Redis and other non-SQL databases don't have tables
+                this._panel.webview.postMessage({ command: 'tablesData', tables: [] });
                 return;
             }
 
@@ -2648,8 +2650,8 @@ window.addEventListener('message', event => {
         });
 
     </script>
-    ${resource ? `<script>${this.getQueryBuilderJSInline()}</script>` : ''}
-    ${resource ? `<script>
+    ${resource && dbType !== 'mongodb' && dbType !== 'redis' ? `<script>${this.getQueryBuilderJSInline()}</script>` : ''}
+    ${resource && dbType !== 'mongodb' && dbType !== 'redis' ? `<script>
         // Initialize query builder after the functions are loaded
         if (typeof initializeQueryBuilder === 'function') {
             initializeQueryBuilder('${resource}', ${schema ? `'${schema}'` : 'undefined'});
