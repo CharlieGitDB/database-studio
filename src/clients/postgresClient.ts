@@ -63,6 +63,9 @@ export class PostgresClient {
         const result = await this.client.query(query);
 
         const columns = result.fields.map((field: any) => field.name);
+        const columnTypes = result.fields.map((field: any) =>
+            field.dataTypeID === 114 || field.dataTypeID === 3802 ? 'json' : 'other'
+        );
 
         // Convert row objects to arrays to match expected format
         const rows = result.rows.map((row: any) =>
@@ -71,7 +74,8 @@ export class PostgresClient {
 
         return {
             columns,
-            rows
+            rows,
+            columnTypes
         };
     }
 
@@ -110,6 +114,9 @@ export class PostgresClient {
 
         if (result.fields && result.fields.length > 0) {
             const columns = result.fields.map((field: any) => field.name);
+            const columnTypes = result.fields.map((field: any) =>
+                field.dataTypeID === 114 || field.dataTypeID === 3802 ? 'json' : 'other'
+            );
 
             // Convert row objects to arrays to match expected format
             const rows = result.rows.map((row: any) =>
@@ -118,7 +125,8 @@ export class PostgresClient {
 
             return {
                 columns,
-                rows
+                rows,
+                columnTypes
             };
         }
 
