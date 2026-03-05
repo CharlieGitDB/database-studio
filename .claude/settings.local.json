@@ -3,7 +3,12 @@
     "allow": [
       "Bash(npm i:*)",
       "Bash(npm run compile:*)",
-      "Bash(node:*)"
+      "Bash(node:*)",
+      "Bash(grep:*)",
+      "Bash(wc:*)",
+      "Bash(head:*)",
+      "Bash(cd /c/Users/c/projects/database-studio-reswob && npx tsc --noEmit 2>&1)",
+      "Bash(cd:*)"
     ],
     "deny": [],
     "ask": []
