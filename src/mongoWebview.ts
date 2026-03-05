@@ -21,8 +21,8 @@ export function getMongoDBWebviewContent(
     });
 
     // Read the HTML and JS files
-    const htmlPath = path.join(extensionUri.fsPath, 'src', 'webviews', 'mongoDbView.html');
-    const jsPath = path.join(extensionUri.fsPath, 'src', 'webviews', 'mongoDbView.js');
+    const htmlPath = path.join(extensionUri.fsPath, 'out', 'webviews', 'mongoDbView.html');
+    const jsPath = path.join(extensionUri.fsPath, 'out', 'webviews', 'mongoDbView.js');
 
     let html = fs.readFileSync(htmlPath, 'utf8');
     const jsContent = fs.readFileSync(jsPath, 'utf8');

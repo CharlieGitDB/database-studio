@@ -41,7 +41,7 @@ export class ConnectionFormPanel {
             {
                 enableScripts: true,
                 retainContextWhenHidden: true,
-                localResourceRoots: [vscode.Uri.file(path.join(extensionUri.fsPath, 'src', 'webviews'))]
+                localResourceRoots: [vscode.Uri.file(path.join(extensionUri.fsPath, 'out', 'webviews'))]
             }
         );
 
@@ -123,8 +123,8 @@ export class ConnectionFormPanel {
     }
 
     private getWebviewContent(): string {
-        const htmlPath = path.join(this.extensionUri.fsPath, 'src', 'webviews', 'connectionForm.html');
-        const jsPath = path.join(this.extensionUri.fsPath, 'src', 'webviews', 'connectionForm.js');
+        const htmlPath = path.join(this.extensionUri.fsPath, 'out', 'webviews', 'connectionForm.html');
+        const jsPath = path.join(this.extensionUri.fsPath, 'out', 'webviews', 'connectionForm.js');
 
         let html = fs.readFileSync(htmlPath, 'utf8');
         const jsContent = fs.readFileSync(jsPath, 'utf8');

@@ -109,7 +109,7 @@ export class DataViewerPanel {
                 enableScripts: true,
                 retainContextWhenHidden: true,
                 localResourceRoots: [
-                    vscode.Uri.joinPath(extensionUri, 'src', 'webviews'),
+                    vscode.Uri.joinPath(extensionUri, 'out', 'webviews'),
                     extensionUri
                 ]
             }
