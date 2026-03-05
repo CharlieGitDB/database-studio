@@ -346,4 +346,54 @@ export class PostgresClient {
             definition: row.definition
         }));
     }
+
+    async getSchemaMap(schema: string = 'public'): Promise<Record<string, string[]>> {
+        if (!this.client) {
+            throw new Error('Not connected');
+        }
+
+        const result = await this.client.query(
+            `SELECT table_name, column_name
+             FROM information_schema.columns
+             WHERE table_schema = $1
+             ORDER BY table_name, ordinal_position`,
+            [schema]
+        );
+
+        const schemaMap: Record<string, string[]> = {};
+        for (const row of result.rows) {
+            if (!schemaMap[row.table_name]) {
+                schemaMap[row.table_name] = [];
+            }
+            schemaMap[row.table_name].push(row.column_name);
+        }
+
+        return schemaMap;
+    }
+
+    async getFullSchemaMap(): Promise<Record<string, Record<string, string[]>>> {
+        if (!this.client) {
+            throw new Error('Not connected');
+        }
+
+        const result = await this.client.query(
+            `SELECT table_schema, table_name, column_name
+             FROM information_schema.columns
+             WHERE table_schema NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
+             ORDER BY table_schema, table_name, ordinal_position`
+        );
+
+        const fullMap: Record<string, Record<string, string[]>> = {};
+        for (const row of result.rows) {
+            if (!fullMap[row.table_schema]) {
+                fullMap[row.table_schema] = {};
+            }
+            if (!fullMap[row.table_schema][row.table_name]) {
+                fullMap[row.table_schema][row.table_name] = [];
+            }
+            fullMap[row.table_schema][row.table_name].push(row.column_name);
+        }
+
+        return fullMap;
+    }
 }

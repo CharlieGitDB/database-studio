@@ -54,4 +54,28 @@ export class DatabaseManager {
         const disconnectPromises = Array.from(this.clients.keys()).map(id => this.disconnect(id));
         await Promise.all(disconnectPromises);
     }
+
+    async getSchemaInfo(connectionId: string, schema?: string): Promise<{ dbType: string; tables: Record<string, string[]>; schemas?: string[]; schemaTablesMap?: Record<string, Record<string, string[]>> }> {
+        const client = this.getClient(connectionId);
+        
+        if (!client) {
+            return { dbType: 'unknown', tables: {} };
+        }
+
+        if (client instanceof MySQLClient) {
+            return { dbType: 'mysql', tables: await client.getSchemaMap() };
+        }
+
+        if (client instanceof PostgresClient) {
+            const schemas = await client.getSchemas();
+            const fullMap = await client.getFullSchemaMap();
+            // Flatten the current schema's tables for backward compat
+            const currentSchema = schema || 'public';
+            const tables = fullMap[currentSchema] || {};
+            return { dbType: 'postgresql', tables, schemas, schemaTablesMap: fullMap };
+        }
+
+        // For Redis and MongoDB, return empty schema
+        return { dbType: 'unknown', tables: {} };
+    }
 }

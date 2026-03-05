@@ -3,6 +3,7 @@ import { ConnectionManager } from './connectionManager';
 import { DatabaseManager } from './databaseManager';
 import { DatabaseTreeDataProvider } from './treeDataProvider';
 import { DataViewerPanel } from './webviewProvider';
+import { ConnectionFormPanel } from './connectionFormPanel';
 import { ConnectionConfig, DatabaseType } from './types';
 
 export function activate(context: vscode.ExtensionContext) {
@@ -49,105 +50,12 @@ export function activate(context: vscode.ExtensionContext) {
 
     // Add connection command
     const addConnectionCommand = vscode.commands.registerCommand('dbClient.addConnection', async () => {
-        const name = await vscode.window.showInputBox({
-            prompt: 'Connection name',
-            placeHolder: 'My Database'
-        });
-
-        if (!name) {
-            return;
-        }
-
-        const type = await vscode.window.showQuickPick(
-            ['redis', 'mysql', 'postgresql', 'mongodb'],
-            { placeHolder: 'Select database type' }
-        ) as DatabaseType;
-
-        if (!type) {
-            return;
-        }
-
-        const host = await vscode.window.showInputBox({
-            prompt: 'Host',
-            value: 'localhost'
-        });
-
-        if (!host) {
-            return;
-        }
-
-        const portStr = await vscode.window.showInputBox({
-            prompt: 'Port',
-            value: type === 'redis' ? '6379' :
-                   type === 'mysql' ? '3306' :
-                   type === 'postgresql' ? '5432' : '27017'
-        });
-
-        if (!portStr) {
-            return;
-        }
-
-        const port = parseInt(portStr);
-
-        let username: string | undefined;
-        let password: string | undefined;
-        let database: string | undefined;
-
-        if (type !== 'redis') {
-            username = await vscode.window.showInputBox({
-                prompt: 'Username (optional)',
-                placeHolder: 'username'
-            });
-
-            password = await vscode.window.showInputBox({
-                prompt: 'Password (optional)',
-                password: true
-            });
-
-            database = await vscode.window.showInputBox({
-                prompt: type === 'postgresql' ? 'Database name (required)' : 'Database name (optional)',
-                placeHolder: 'database'
-            });
-
-            if (type === 'postgresql' && !database) {
-                vscode.window.showErrorMessage('Database name is required for PostgreSQL connections');
-                return;
-            }
-        } else {
-            password = await vscode.window.showInputBox({
-                prompt: 'Password (optional)',
-                password: true
-            });
-        }
-
-        // Ask about update protection for SQL databases
-        let updateProtection = false;
-        if (type === 'mysql' || type === 'postgresql') {
-            const enableProtection = await vscode.window.showQuickPick(
-                ['No', 'Yes'],
-                {
-                    placeHolder: 'Enable update protection? (Will prompt before running UPDATE, INSERT, DELETE queries)',
-                    ignoreFocusOut: true
-                }
-            );
-            updateProtection = enableProtection === 'Yes';
-        }
-
-        const config: ConnectionConfig = {
-            id: Date.now().toString(),
-            name,
-            type,
-            host,
-            port,
-            username,
-            password,
-            database,
-            updateProtection
-        };
-
-        await connectionManager.addConnection(config);
-        treeDataProvider.refresh();
-        vscode.window.showInformationMessage(`Connection "${name}" added successfully`);
+        ConnectionFormPanel.createOrShow(
+            context.extensionUri,
+            connectionManager,
+            databaseManager,
+            () => treeDataProvider.refresh()
+        );
     });
 
     // Refresh connections command
@@ -171,106 +79,13 @@ export function activate(context: vscode.ExtensionContext) {
                 treeDataProvider.setConnectionStatus(item.connectionId, false);
             }
 
-            const name = await vscode.window.showInputBox({
-                prompt: 'Connection name',
-                value: existingConfig.name
-            });
-
-            if (!name) {
-                return;
-            }
-
-            const host = await vscode.window.showInputBox({
-                prompt: 'Host',
-                value: existingConfig.host
-            });
-
-            if (!host) {
-                return;
-            }
-
-            const portStr = await vscode.window.showInputBox({
-                prompt: 'Port',
-                value: existingConfig.port.toString()
-            });
-
-            if (!portStr) {
-                return;
-            }
-
-            const port = parseInt(portStr);
-
-            let username: string | undefined;
-            let password: string | undefined;
-            let database: string | undefined;
-
-            if (existingConfig.type !== 'redis') {
-                username = await vscode.window.showInputBox({
-                    prompt: 'Username (optional)',
-                    value: existingConfig.username || ''
-                });
-
-                password = await vscode.window.showInputBox({
-                    prompt: 'Password (leave empty to keep existing, or enter new)',
-                    password: true,
-                    placeHolder: existingConfig.password ? '••••••••' : 'No password set'
-                });
-
-                // If password is empty, keep the existing one
-                if (!password) {
-                    password = existingConfig.password;
-                }
-
-                database = await vscode.window.showInputBox({
-                    prompt: existingConfig.type === 'postgresql' ? 'Database name (required)' : 'Database name (optional)',
-                    value: existingConfig.database || ''
-                });
-
-                if (existingConfig.type === 'postgresql' && !database) {
-                    vscode.window.showErrorMessage('Database name is required for PostgreSQL connections');
-                    return;
-                }
-            } else {
-                password = await vscode.window.showInputBox({
-                    prompt: 'Password (leave empty to keep existing, or enter new)',
-                    password: true,
-                    placeHolder: existingConfig.password ? '••••••••' : 'No password set'
-                });
-
-                // If password is empty, keep the existing one
-                if (!password) {
-                    password = existingConfig.password;
-                }
-            }
-
-            // Ask about update protection for SQL databases
-            let updateProtection = existingConfig.updateProtection || false;
-            if (existingConfig.type === 'mysql' || existingConfig.type === 'postgresql') {
-                const enableProtection = await vscode.window.showQuickPick(
-                    ['No', 'Yes'],
-                    {
-                        placeHolder: 'Enable update protection? (Will prompt before running UPDATE, INSERT, DELETE queries)',
-                        ignoreFocusOut: true
-                    }
-                );
-                updateProtection = enableProtection === 'Yes';
-            }
-
-            const updatedConfig: ConnectionConfig = {
-                id: existingConfig.id,
-                name,
-                type: existingConfig.type,
-                host,
-                port,
-                username,
-                password,
-                database,
-                updateProtection
-            };
-
-            await connectionManager.updateConnection(updatedConfig);
-            treeDataProvider.refresh();
-            vscode.window.showInformationMessage(`Connection "${name}" updated successfully`);
+            ConnectionFormPanel.createOrShow(
+                context.extensionUri,
+                connectionManager,
+                databaseManager,
+                () => treeDataProvider.refresh(),
+                existingConfig
+            );
         }
     });
 

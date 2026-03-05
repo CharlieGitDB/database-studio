@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline';">
+    <title>Connection Form</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: var(--vscode-font-family);
+            font-size: var(--vscode-font-size);
+            color: var(--vscode-foreground);
+            background-color: var(--vscode-editor-background);
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: flex-start;
+            min-height: 100vh;
+        }
+
+        .form-container {
+            max-width: 520px;
+            width: 100%;
+            padding: 32px 24px;
+        }
+
+        .form-title {
+            font-size: 20px;
+            font-weight: 600;
+            margin-bottom: 24px;
+            color: var(--vscode-foreground);
+        }
+
+        .form-group {
+            margin-bottom: 16px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 4px;
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--vscode-foreground);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .form-group label .required {
+            color: var(--vscode-errorForeground, #f48771);
+            margin-left: 2px;
+        }
+
+        .form-group input,
+        .form-group select {
+            width: 100%;
+            padding: 6px 10px;
+            border: 1px solid var(--vscode-input-border, transparent);
+            background-color: var(--vscode-input-background);
+            color: var(--vscode-input-foreground);
+            border-radius: 3px;
+            font-family: var(--vscode-font-family);
+            font-size: var(--vscode-font-size);
+            outline: none;
+        }
+
+        .form-group input:focus,
+        .form-group select:focus {
+            border-color: var(--vscode-focusBorder);
+        }
+
+        .form-group input:disabled,
+        .form-group select:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        .form-group select {
+            appearance: none;
+            -webkit-appearance: none;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%23999'/%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: right 10px center;
+            padding-right: 28px;
+        }
+
+        .form-group .hint {
+            font-size: 11px;
+            color: var(--vscode-descriptionForeground);
+            margin-top: 4px;
+        }
+
+        .form-row {
+            display: flex;
+            gap: 12px;
+        }
+
+        .form-row .form-group {
+            flex: 1;
+        }
+
+        .form-row .form-group.port-group {
+            flex: 0 0 120px;
+        }
+
+        .checkbox-group {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 16px;
+        }
+
+        .checkbox-group input[type="checkbox"] {
+            width: 16px;
+            height: 16px;
+            accent-color: var(--vscode-button-background);
+            cursor: pointer;
+        }
+
+        .checkbox-group label {
+            font-size: var(--vscode-font-size);
+            color: var(--vscode-foreground);
+            cursor: pointer;
+            text-transform: none;
+            letter-spacing: normal;
+            font-weight: normal;
+        }
+
+        .button-row {
+            display: flex;
+            gap: 8px;
+            margin-top: 24px;
+        }
+
+        .btn {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 3px;
+            font-family: var(--vscode-font-family);
+            font-size: var(--vscode-font-size);
+            cursor: pointer;
+            outline: none;
+        }
+
+        .btn:focus {
+            outline: 1px solid var(--vscode-focusBorder);
+            outline-offset: 1px;
+        }
+
+        .btn-primary {
+            background-color: var(--vscode-button-background);
+            color: var(--vscode-button-foreground);
+        }
+
+        .btn-primary:hover {
+            background-color: var(--vscode-button-hoverBackground);
+        }
+
+        .btn-secondary {
+            background-color: var(--vscode-button-secondaryBackground);
+            color: var(--vscode-button-secondaryForeground);
+        }
+
+        .btn-secondary:hover {
+            background-color: var(--vscode-button-secondaryHoverBackground);
+        }
+
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        .status-area {
+            margin-top: 16px;
+            min-height: 32px;
+        }
+
+        .status-message {
+            padding: 8px 12px;
+            border-radius: 3px;
+            font-size: 13px;
+            display: none;
+        }
+
+        .status-message.success {
+            display: block;
+            background-color: var(--vscode-inputValidation-infoBackground, rgba(0, 122, 204, 0.1));
+            border: 1px solid var(--vscode-inputValidation-infoBorder, #007acc);
+            color: var(--vscode-foreground);
+        }
+
+        .status-message.error {
+            display: block;
+            background-color: var(--vscode-inputValidation-errorBackground, rgba(255, 0, 0, 0.1));
+            border: 1px solid var(--vscode-inputValidation-errorBorder, #be1100);
+            color: var(--vscode-foreground);
+        }
+
+        .status-message.testing {
+            display: block;
+            background-color: var(--vscode-input-background);
+            border: 1px solid var(--vscode-input-border, transparent);
+            color: var(--vscode-descriptionForeground);
+        }
+
+        .separator {
+            border: none;
+            border-top: 1px solid var(--vscode-panel-border, var(--vscode-input-border, rgba(128, 128, 128, 0.3)));
+            margin: 20px 0;
+        }
+
+        .section-label {
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.8px;
+            color: var(--vscode-descriptionForeground);
+            margin-bottom: 12px;
+        }
+
+        .hidden {
+            display: none !important;
+        }
+
+        .validation-error {
+            border-color: var(--vscode-inputValidation-errorBorder, #be1100) !important;
+        }
+    </style>
+</head>
+<body>
+    <div class="form-container">
+        <h2 class="form-title" id="formTitle">Add Connection</h2>
+
+        <div class="form-group">
+            <label for="connName">Name <span class="required">*</span></label>
+            <input type="text" id="connName" placeholder="My Database" autocomplete="off" />
+        </div>
+
+        <div class="form-group">
+            <label for="connType">Type <span class="required">*</span></label>
+            <select id="connType">
+                <option value="">Select database type...</option>
+                <option value="postgresql">PostgreSQL</option>
+                <option value="mysql">MySQL</option>
+                <option value="mongodb">MongoDB</option>
+                <option value="redis">Redis</option>
+            </select>
+        </div>
+
+        <hr class="separator" />
+        <div class="section-label">Connection Details</div>
+
+        <div class="form-row">
+            <div class="form-group">
+                <label for="connHost">Host <span class="required">*</span></label>
+                <input type="text" id="connHost" value="localhost" autocomplete="off" />
+            </div>
+            <div class="form-group port-group">
+                <label for="connPort">Port <span class="required">*</span></label>
+                <input type="number" id="connPort" placeholder="Port" autocomplete="off" />
+            </div>
+        </div>
+
+        <div id="authSection">
+            <hr class="separator" />
+            <div class="section-label">Authentication</div>
+
+            <div class="form-group" id="usernameGroup">
+                <label for="connUsername">Username</label>
+                <input type="text" id="connUsername" placeholder="username" autocomplete="off" />
+            </div>
+
+            <div class="form-group">
+                <label for="connPassword">Password</label>
+                <input type="password" id="connPassword" placeholder="password" autocomplete="off" />
+                <div class="hint" id="passwordHint"></div>
+            </div>
+        </div>
+
+        <div class="form-group" id="databaseGroup">
+            <hr class="separator" />
+            <div class="section-label">Database</div>
+            <label for="connDatabase" id="databaseLabel">Database</label>
+            <input type="text" id="connDatabase" placeholder="database" autocomplete="off" />
+        </div>
+
+        <div id="optionsSection">
+            <hr class="separator" />
+            <div class="section-label">Options</div>
+            <div class="checkbox-group" id="updateProtectionGroup">
+                <input type="checkbox" id="connUpdateProtection" />
+                <label for="connUpdateProtection">Enable update protection</label>
+            </div>
+            <div class="hint" style="margin-top: -8px; margin-bottom: 8px;">Prompts before running UPDATE, INSERT, and DELETE queries</div>
+        </div>
+
+        <div class="button-row">
+            <button class="btn btn-primary" id="saveBtn">Save Connection</button>
+            <button class="btn btn-secondary" id="testBtn">Test Connection</button>
+            <button class="btn btn-secondary" id="cancelBtn">Cancel</button>
+        </div>
+
+        <div class="status-area">
+            <div class="status-message" id="statusMessage"></div>
+        </div>
+    </div>
+
+    <script src="__SCRIPT_URI__"></script>
+</body>
+</html>

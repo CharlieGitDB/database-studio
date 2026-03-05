@@ -254,4 +254,35 @@ export class MySQLClient {
             definition: row.definition
         }));
     }
+
+    async getSchemaMap(): Promise<Record<string, string[]>> {
+        if (!this.connection) {
+            throw new Error('Not connected');
+        }
+
+        const dbName = (this.connection as any).config?.database;
+        if (!dbName) {
+            throw new Error('No database selected');
+        }
+
+        const [rows] = await this.connection.query(
+            `SELECT TABLE_NAME, COLUMN_NAME
+             FROM INFORMATION_SCHEMA.COLUMNS
+             WHERE TABLE_SCHEMA = ?
+             ORDER BY TABLE_NAME, ORDINAL_POSITION`,
+            [dbName]
+        );
+
+        const schemaMap: Record<string, string[]> = {};
+        for (const row of rows as any[]) {
+            const tableName = row.TABLE_NAME;
+            const columnName = row.COLUMN_NAME;
+            if (!schemaMap[tableName]) {
+                schemaMap[tableName] = [];
+            }
+            schemaMap[tableName].push(columnName);
+        }
+
+        return schemaMap;
+    }
 }

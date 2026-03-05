@@ -2,6 +2,18 @@
 
 All notable changes to the "Database Studio by Reswob" extension will be documented in this file.
 
+## [1.1.0] - 2026-03-05
+
+
+### Added
+- Context-aware SQL autocomplete for PostgreSQL and MySQL query editors
+- Suggestions for schemas, tables (from all schemas), and columns based on query context
+- Dot-access completions (schema.table.column) and alias resolution
+- Bulk schema introspection for fast metadata loading (single INFORMATION_SCHEMA query)
+- Loading indicator and error feedback for schema info in the query editor
+- New connection creation and edit experience using a webview form panel (replaces input box flow)
+
+
 ## [1.0.6] - 2026-02-04
 
 ### Added
