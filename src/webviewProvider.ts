@@ -1,4 +1,6 @@
 import * as vscode from 'vscode';
+import * as fs from 'fs';
+import * as path from 'path';
 import { DatabaseManager } from './databaseManager';
 import { ConnectionManager } from './connectionManager';
 import { QueryResult, ColumnInfo, QueryBuilderState, SavedQuery } from './types';
@@ -40,7 +42,7 @@ export class DataViewerPanel {
                         await this.deleteRecord(message.connectionId, message.resource, message.data, message.schema);
                         break;
                     case 'executeQuery':
-                        await this.executeQuery(message.connectionId, message.query, message.schema);
+                        await this.executeQuery(message.connectionId, message.query, message.schema, message.resource);
                         break;
                     case 'insertDocument':
                         await this.insertDocument(message.connectionId, message.resource, message.document);
@@ -148,7 +150,7 @@ export class DataViewerPanel {
             } else if (client instanceof MySQLClient) {
                 data = await client.getTableData(resource);
                 // Generate default SELECT query for MySQL
-                defaultQuery = `SELECT * FROM ${resource} LIMIT 100;`;
+                defaultQuery = `SELECT * FROM \`${resource}\` LIMIT 100;`;
             } else if (client instanceof PostgresClient) {
                 data = await client.getTableData(resource, schema);
                 // Generate default SELECT query for PostgreSQL with schema qualification
@@ -229,8 +231,8 @@ export class DataViewerPanel {
             .trim()
             .toUpperCase();
 
-        // Check if query starts with SELECT, SHOW, DESCRIBE, EXPLAIN, or WITH (for CTEs that end with SELECT)
-        const readOnlyKeywords = ['SELECT', 'SHOW', 'DESCRIBE', 'DESC', 'EXPLAIN', 'WITH'];
+        // Check if query starts with SELECT, SHOW, DESCRIBE, EXPLAIN
+        const readOnlyKeywords = ['SELECT', 'SHOW', 'DESCRIBE', 'DESC', 'EXPLAIN'];
 
         for (const keyword of readOnlyKeywords) {
             if (normalizedQuery.startsWith(keyword)) {
@@ -238,10 +240,22 @@ export class DataViewerPanel {
             }
         }
 
+        // WITH CTEs can contain DML (INSERT, UPDATE, DELETE) in PostgreSQL,
+        // so check that the CTE body doesn't contain write operations
+        if (normalizedQuery.startsWith('WITH')) {
+            const dmlKeywords = ['INSERT', 'UPDATE', 'DELETE', 'DROP', 'ALTER', 'CREATE', 'TRUNCATE'];
+            for (const dml of dmlKeywords) {
+                if (normalizedQuery.includes(dml)) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
         return false;
     }
 
-    private async executeQuery(connectionId: string, query: string, schema?: string) {
+    private async executeQuery(connectionId: string, query: string, schema?: string, resource?: string) {
         try {
             const client = this.databaseManager.getClient(connectionId);
             const config = this.connectionManager.getConnection(connectionId);
@@ -276,14 +290,17 @@ export class DataViewerPanel {
             if (client instanceof PostgresClient) {
                 // Set search_path to the schema if provided
                 if (schema) {
-                    await (client as any).client.query(`SET search_path TO "${schema}", public`);
+                    const escapedSchema = schema.replace(/"/g, '""');
+                    await (client as any).client.query(`SET search_path TO "${escapedSchema}", public`);
                 }
                 data = await client.executeQuery(query);
             } else if (client instanceof MySQLClient) {
                 data = await client.executeQuery(query);
             } else if (client instanceof MongoDBClient) {
-                // For MongoDB, parse the query as JSON
-                data = await client.executeQuery(schema || this.currentSchema || '', query, schema);
+                // For MongoDB, resource is the collection name, schema/currentSchema is the database name
+                const collectionName = resource || '';
+                const databaseName = schema || this.currentSchema;
+                data = await client.executeQuery(collectionName, query, databaseName);
             } else {
                 this.showError('Query execution not supported for this database type');
                 return;
@@ -294,7 +311,8 @@ export class DataViewerPanel {
                 command: 'queryResults',
                 columns: data.columns,
                 rows: data.rows,
-                rowCount: data.rows.length
+                rowCount: data.rows.length,
+                columnTypes: data.columnTypes || []
             });
             vscode.window.showInformationMessage('Query executed successfully');
         } catch (error) {
@@ -1214,14 +1232,144 @@ window.addEventListener('message', event => {
 `;
     }
 
+    /**
+     * Reads the active VS Code color theme's token colors and maps them
+     * to CSS custom properties for accurate syntax highlighting in webviews.
+     */
+    private getThemeTokenColors(): Record<string, string> {
+        const result: Record<string, string> = {};
+
+        try {
+            const themeName = vscode.workspace.getConfiguration('workbench').get<string>('colorTheme');
+            if (!themeName) { return result; }
+
+            // Find the theme extension
+            for (const ext of vscode.extensions.all) {
+                const themes = ext.packageJSON?.contributes?.themes;
+                if (!themes) { continue; }
+
+                for (const theme of themes) {
+                    if (theme.label === themeName || theme.id === themeName) {
+                        const themePath = path.join(ext.extensionPath, theme.path);
+                        const tokenColors = this.readThemeTokenColors(themePath);
+                        // Also apply user customizations on top
+                        const userCustom = vscode.workspace.getConfiguration('editor').get<any>('tokenColorCustomizations');
+                        let allTokenColors = tokenColors;
+                        if (userCustom?.textMateRules) {
+                            allTokenColors = [...tokenColors, ...userCustom.textMateRules];
+                        }
+                        return this.mapTokenColorsToCSS(allTokenColors);
+                    }
+                }
+            }
+        } catch (_e) {
+            // Fall back to empty — CSS variable fallbacks will be used
+        }
+
+        return result;
+    }
+
+    private parseJsonc(content: string): any {
+        // Strip BOM
+        let s = content.replace(/^\uFEFF/, '');
+        // Remove single-line comments (but not inside strings)
+        s = s.replace(/("(?:[^"\\]|\\.)*")|\/\/.*$/gm, (_, str) => str || '');
+        // Remove multi-line comments
+        s = s.replace(/("(?:[^"\\]|\\.)*")|\/\*[\s\S]*?\*\//g, (_, str) => str || '');
+        // Remove trailing commas before } or ]
+        s = s.replace(/,\s*([\]}])/g, '$1');
+        return JSON.parse(s);
+    }
+
+    private readThemeTokenColors(themePath: string): any[] {
+        try {
+            const content = fs.readFileSync(themePath, 'utf-8');
+            const themeJson = this.parseJsonc(content);
+            let tokenColors = themeJson.tokenColors || [];
+
+            // Handle theme inheritance via "include"
+            if (themeJson.include) {
+                const parentPath = path.join(path.dirname(themePath), themeJson.include);
+                const parentColors = this.readThemeTokenColors(parentPath);
+                tokenColors = [...parentColors, ...tokenColors]; // Child overrides parent
+            }
+
+            return tokenColors;
+        } catch (_e) {
+            return [];
+        }
+    }
+
+    private scopeMatchesAny(scope: string, patterns: string[]): boolean {
+        for (const p of patterns) {
+            if (scope === p || scope.startsWith(p + '.')) { return true; }
+        }
+        return false;
+    }
+
+    private mapTokenColorsToCSS(tokenColors: any[]): Record<string, string> {
+        const result: Record<string, string> = {};
+
+        for (const rule of tokenColors) {
+            if (!rule.settings?.foreground) { continue; }
+
+            const rawScope = rule.scope;
+            const scopes: string[] = Array.isArray(rawScope)
+                ? rawScope
+                : typeof rawScope === 'string'
+                    ? rawScope.split(',').map((s: string) => s.trim())
+                    : [];
+
+            const color = rule.settings.foreground;
+            const fontStyle = rule.settings.fontStyle || '';
+
+            for (const scope of scopes) {
+                if (this.scopeMatchesAny(scope, ['keyword', 'keyword.control', 'keyword.operator.word', 'storage', 'storage.type', 'storage.modifier'])) {
+                    result['--syntax-keyword'] = color;
+                    if (fontStyle) { result['--syntax-keyword-style'] = fontStyle; }
+                }
+                if (this.scopeMatchesAny(scope, ['string', 'string.quoted'])) {
+                    result['--syntax-string'] = color;
+                }
+                if (this.scopeMatchesAny(scope, ['constant.numeric'])) {
+                    result['--syntax-number'] = color;
+                }
+                if (this.scopeMatchesAny(scope, ['comment', 'comment.line', 'comment.block'])) {
+                    result['--syntax-comment'] = color;
+                    if (fontStyle) { result['--syntax-comment-style'] = fontStyle; }
+                }
+                if (this.scopeMatchesAny(scope, ['constant.language'])) {
+                    result['--syntax-atom'] = color;
+                }
+                if (this.scopeMatchesAny(scope, ['entity.name.function', 'support.function'])) {
+                    result['--syntax-builtin'] = color;
+                }
+                if (this.scopeMatchesAny(scope, ['variable', 'entity.name'])) {
+                    result['--syntax-variable'] = color;
+                }
+                if (this.scopeMatchesAny(scope, ['support.type', 'entity.name.type', 'storage.type'])) {
+                    result['--syntax-type'] = color;
+                }
+                if (this.scopeMatchesAny(scope, ['support.type.property-name', 'entity.other.attribute-name', 'meta.object-literal.key'])) {
+                    result['--syntax-property'] = color;
+                }
+            }
+        }
+
+        return result;
+    }
+
     private getWebviewContent(data: QueryResult, connectionId: string, resource: string, dbType: string, schema?: string, previousQuery?: string): string {
         // Get connection name for display
         const config = this.connectionManager.getConnection(connectionId);
         const connectionName = config?.name || connectionId;
 
+        // Extract actual theme token colors for accurate syntax highlighting
+        const themeColors = this.getThemeTokenColors();
+
         // Use MongoDB-specific UI for MongoDB databases
         if (dbType === 'mongodb' && resource) {
-            return getMongoDBWebviewContent(this.extensionUri, this._panel.webview, data, connectionId, connectionName, resource, schema);
+            return getMongoDBWebviewContent(this.extensionUri, this._panel.webview, data, connectionId, connectionName, resource, schema, themeColors);
         }
 
         const rows = data.rows.map(row => {
@@ -1231,6 +1379,10 @@ window.addEventListener('message', event => {
             });
         });
 
+        const themeColorCSS = Object.entries(themeColors)
+            .map(([key, value]) => `            ${key}: ${value};`)
+            .join('\n');
+
         return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1238,9 +1390,12 @@ window.addEventListener('message', event => {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Database Viewer</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/codemirror.min.css">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/theme/monokai.min.css">
+
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/addon/hint/show-hint.min.css">
     <style>
+        :root {
+${themeColorCSS}
+        }
         body {
             padding: 5px 20px 20px 20px;
             font-family: var(--vscode-font-family);
@@ -1338,6 +1493,28 @@ window.addEventListener('message', event => {
             font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
             font-size: 14px;
         }
+        /* Custom CodeMirror theme — uses actual theme token colors extracted from the active VS Code theme, with CSS variable fallbacks */
+        .cm-s-vscode.CodeMirror          { background: var(--vscode-editor-background); color: var(--vscode-editor-foreground); }
+        .cm-s-vscode .CodeMirror-gutters  { background: var(--vscode-editorGutter-background, var(--vscode-editor-background)); border-right-color: var(--vscode-panel-border); }
+        .cm-s-vscode .CodeMirror-linenumber { color: var(--vscode-editorLineNumber-foreground); }
+        .cm-s-vscode .CodeMirror-cursor   { border-left-color: var(--vscode-editorCursor-foreground); }
+        .cm-s-vscode div.CodeMirror-selected { background: var(--vscode-editor-selectionBackground); }
+        .cm-s-vscode .CodeMirror-activeline-background { background: var(--vscode-editor-lineHighlightBackground, transparent); }
+        .cm-s-vscode .CodeMirror-matchingbracket { color: var(--vscode-editorBracketMatch-foreground, inherit) !important; outline: 1px solid var(--vscode-editorBracketMatch-border, transparent); background: var(--vscode-editorBracketMatch-background, transparent); }
+        .cm-s-vscode .cm-keyword   { color: var(--syntax-keyword, var(--vscode-debugTokenExpression-boolean)); }
+        .cm-s-vscode .cm-atom      { color: var(--syntax-atom, var(--vscode-debugTokenExpression-boolean)); }
+        .cm-s-vscode .cm-number    { color: var(--syntax-number, var(--vscode-debugTokenExpression-number)); }
+        .cm-s-vscode .cm-string    { color: var(--syntax-string, var(--vscode-debugTokenExpression-string)); }
+        .cm-s-vscode .cm-string-2  { color: var(--syntax-string, var(--vscode-debugTokenExpression-string)); }
+        .cm-s-vscode .cm-comment   { color: var(--syntax-comment, var(--vscode-descriptionForeground)); font-style: var(--syntax-comment-style, italic); }
+        .cm-s-vscode .cm-variable   { color: var(--syntax-variable, var(--vscode-editor-foreground)); }
+        .cm-s-vscode .cm-variable-2 { color: var(--syntax-variable, var(--vscode-editor-foreground)); }
+        .cm-s-vscode .cm-def        { color: var(--syntax-variable, var(--vscode-editor-foreground)); }
+        .cm-s-vscode .cm-property   { color: var(--syntax-property, var(--vscode-editor-foreground)); }
+        .cm-s-vscode .cm-operator   { color: var(--vscode-editor-foreground); }
+        .cm-s-vscode .cm-bracket    { color: var(--vscode-editor-foreground); }
+        .cm-s-vscode .cm-builtin    { color: var(--syntax-builtin, var(--syntax-keyword, var(--vscode-debugTokenExpression-boolean))); }
+        .cm-s-vscode .cm-type       { color: var(--syntax-type, var(--vscode-debugTokenExpression-name)); }
         .query-actions {
             margin-top: 8px;
             display: flex;
@@ -1679,6 +1856,73 @@ window.addEventListener('message', event => {
             white-space: pre-wrap;
             word-break: break-word;
         }
+        .json-cell {
+            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+            cursor: pointer;
+            max-width: 300px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            color: var(--vscode-textLink-foreground);
+            font-size: 12px;
+        }
+        .json-cell:hover {
+            text-decoration: underline;
+            background-color: var(--vscode-list-hoverBackground);
+        }
+        .json-modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.5);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+        }
+        .json-modal-overlay.active {
+            display: flex;
+            overflow: hidden;
+        }
+        .json-modal {
+            background: var(--vscode-editor-background);
+            border: 1px solid var(--vscode-panel-border);
+            border-radius: 4px;
+            width: 700px;
+            max-width: 90vw;
+        }
+        .json-modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 16px;
+            border-bottom: 1px solid var(--vscode-panel-border);
+            font-weight: 600;
+            font-size: 14px;
+        }
+        .json-modal-header .modal-actions {
+            display: flex;
+            gap: 6px;
+        }
+        .json-modal-body {
+            padding: 0;
+            overflow: hidden;
+        }
+        .json-content {
+            margin: 0;
+            padding: 12px 16px;
+            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+            font-size: 13px;
+            line-height: 1.5;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            color: var(--vscode-editor-foreground);
+            background: transparent;
+        }
+        .json-key { color: var(--syntax-property, var(--vscode-debugTokenExpression-name)); }
+        .json-string { color: var(--syntax-string, var(--vscode-debugTokenExpression-string)); }
+        .json-number { color: var(--syntax-number, var(--vscode-debugTokenExpression-number)); }
+        .json-boolean { color: var(--syntax-atom, var(--vscode-debugTokenExpression-boolean)); }
+        .json-null { color: var(--syntax-comment, var(--vscode-descriptionForeground)); }
         .empty-state {
             color: var(--vscode-descriptionForeground);
             font-size: 13px;
@@ -1806,6 +2050,44 @@ window.addEventListener('message', event => {
         }
         .modal-btn.primary:hover {
             background-color: var(--vscode-button-hoverBackground);
+        }
+        .loading-bar {
+            display: none;
+            align-items: center;
+            gap: 10px;
+            padding: 8px 14px;
+            background: var(--vscode-editor-background);
+            border: 1px solid var(--vscode-focusBorder, var(--vscode-textLink-foreground));
+            border-radius: 4px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+            margin-bottom: 8px;
+        }
+        .loading-bar.active {
+            display: flex;
+        }
+        .loading-spinner {
+            width: 18px;
+            height: 18px;
+            border: 2px solid var(--vscode-panel-border);
+            border-top-color: var(--vscode-textLink-foreground);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            flex-shrink: 0;
+        }
+        .loading-label {
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--vscode-foreground);
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        .results-loading button,
+        .results-loading .json-cell,
+        .results-loading th[onclick],
+        .results-loading .action-btn {
+            pointer-events: none;
+            opacity: 0.5;
         }
     </style>
 </head>
@@ -1994,6 +2276,10 @@ window.addEventListener('message', event => {
     </div>
     ` : ''}
 
+    <div id="loadingBar" class="loading-bar">
+        <div class="loading-spinner"></div>
+        <span class="loading-label">Running query...</span>
+    </div>
     <div id="resultsContainer">
         ${resource ? `
         <div class="results-header">
@@ -2022,7 +2308,16 @@ window.addEventListener('message', event => {
             <tbody>
                 ${rows.map((row, rowIdx) => `
                     <tr>
-                        ${row.map(cell => `<td>${cell}</td>`).join('')}
+                        ${row.map((cell, colIdx) => {
+                            const colTypes = data.columnTypes || [];
+                            if (colTypes[colIdx] === 'json') {
+                                const raw = typeof cell === 'object' ? JSON.stringify(cell) : String(cell ?? '');
+                                const escaped = raw.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+                                const truncated = escaped.length > 80 ? escaped.substring(0, 80) + '...' : escaped;
+                                return `<td class="json-cell" onclick="showJsonModal(${rowIdx},${colIdx})" title="Click to view JSON">${truncated}</td>`;
+                            }
+                            return `<td>${cell}</td>`;
+                        }).join('')}
                         <td>
                             <button onclick="editRow(${rowIdx})">Edit</button>
                             <button onclick="deleteRow(${rowIdx})">Delete</button>
@@ -2041,13 +2336,29 @@ window.addEventListener('message', event => {
         <button onclick="closeEdit()">Cancel</button>
     </div>
 
+    <div class="json-modal-overlay" id="jsonModalOverlay" onclick="if(event.target===this)closeJsonModal()">
+        <div class="json-modal">
+            <div class="json-modal-header">
+                <span id="jsonModalTitle">JSON Viewer</span>
+                <div class="modal-actions">
+                    <button class="action-btn" onclick="copyJsonToClipboard()">Copy</button>
+                    <button class="action-btn" onclick="closeJsonModal()">Close</button>
+                </div>
+            </div>
+            <div class="json-modal-body">
+                <pre id="jsonModalContent" class="json-content"></pre>
+            </div>
+        </div>
+    </div>
+
     <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/codemirror.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/mode/sql/sql.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/mode/javascript/javascript.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/addon/hint/show-hint.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/addon/hint/sql-hint.min.js"></script>
     <script>
         const vscode = acquireVsCodeApi();
-        const data = ${JSON.stringify({ columns: data.columns, rows })};
+        const data = ${JSON.stringify({ columns: data.columns, rows, columnTypes: data.columnTypes || [] })};
         const connectionId = '${connectionId}';
         const resource = '${resource}';
         const dbType = '${dbType}';
@@ -2372,7 +2683,7 @@ window.addEventListener('message', event => {
 
                 editor = CodeMirror.fromTextArea(sqlQueryElement, {
                     mode: 'text/x-sql',
-                    theme: 'monokai',
+                    theme: 'vscode',
                     lineNumbers: true,
                     lineWrapping: true,
                     indentUnit: 4,
@@ -2417,10 +2728,24 @@ window.addEventListener('message', event => {
                 alert('Please enter a SQL query');
                 return;
             }
+            showLoading();
             vscode.postMessage({ command: 'executeQuery', connectionId, query, schema });
         }
 
+        function showLoading() {
+            document.getElementById('loadingBar').classList.add('active');
+            var rc = document.getElementById('resultsContainer');
+            if (rc) rc.classList.add('results-loading');
+        }
+
+        function hideLoading() {
+            document.getElementById('loadingBar').classList.remove('active');
+            var rc = document.getElementById('resultsContainer');
+            if (rc) rc.classList.remove('results-loading');
+        }
+
         function refresh() {
+            showLoading();
             vscode.postMessage({ command: 'refresh', connectionId, resource, schema });
         }
 
@@ -2490,10 +2815,12 @@ window.addEventListener('message', event => {
             closeEdit();
         }
 
-        function updateQueryResults(columns, rows, rowCount) {
+        function updateQueryResults(columns, rows, rowCount, columnTypes) {
+            hideLoading();
             // Update the data object
             data.columns = columns;
             data.rows = rows;
+            data.columnTypes = columnTypes || [];
 
             // Update row count
             const rowCountElement = document.getElementById('rowCount');
@@ -2515,7 +2842,13 @@ window.addEventListener('message', event => {
                 if (tbody) {
                     tbody.innerHTML = rows.map((row, rowIdx) => \`
                         <tr>
-                            \${row.map(cell => {
+                            \${row.map((cell, colIdx) => {
+                                if (isJsonColumn(colIdx)) {
+                                    const raw = typeof cell === 'object' ? JSON.stringify(cell) : String(cell == null ? '' : cell);
+                                    const escaped = raw.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+                                    const truncated = escaped.length > 80 ? escaped.substring(0, 80) + '...' : escaped;
+                                    return \`<td class="json-cell" onclick="showJsonModal(\${rowIdx},\${colIdx})" title="Click to view JSON">\${truncated}</td>\`;
+                                }
                                 const value = typeof cell === 'object' ? JSON.stringify(cell) : String(cell);
                                 return \`<td>\${value}</td>\`;
                             }).join('')}
@@ -2536,6 +2869,7 @@ window.addEventListener('message', event => {
         }
 
         function showErrorInline(errorMessage) {
+            hideLoading();
             const resultsContainer = document.getElementById('resultsContainer');
             if (!resultsContainer) {
                 console.error('Results container not found');
@@ -2559,6 +2893,66 @@ window.addEventListener('message', event => {
             const div = document.createElement('div');
             div.textContent = text;
             return div.innerHTML;
+        }
+
+        function isJsonColumn(colIdx) {
+            return data.columnTypes && data.columnTypes[colIdx] === 'json';
+        }
+
+        var jsonPrettyText = '';
+        function syntaxHighlightJson(json) {
+            var escaped = json.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+            return escaped.replace(/("(\\\\u[a-zA-Z0-9]{4}|\\\\[^u]|[^\\\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g, function(match) {
+                var cls = 'json-number';
+                if (/^"/.test(match)) {
+                    if (/:$/.test(match)) {
+                        cls = 'json-key';
+                    } else {
+                        cls = 'json-string';
+                    }
+                } else if (/true|false/.test(match)) {
+                    cls = 'json-boolean';
+                } else if (/null/.test(match)) {
+                    cls = 'json-null';
+                }
+                return '<span class="' + cls + '">' + match + '</span>';
+            });
+        }
+
+        function showJsonModal(rowIdx, colIdx) {
+            var cell = data.rows[rowIdx] ? data.rows[rowIdx][colIdx] : null;
+            var raw = typeof cell === 'object' ? JSON.stringify(cell) : String(cell == null ? '' : cell);
+            var pretty;
+            try {
+                pretty = JSON.stringify(JSON.parse(raw), null, 2);
+            } catch(e) {
+                pretty = raw;
+            }
+            jsonPrettyText = pretty;
+            var titleEl = document.getElementById('jsonModalTitle');
+            if (titleEl) {
+                titleEl.textContent = 'JSON Viewer — ' + (data.columns[colIdx] || 'Column ' + colIdx);
+            }
+            document.getElementById('jsonModalOverlay').classList.add('active');
+            document.body.style.overflow = 'hidden';
+            var contentEl = document.getElementById('jsonModalContent');
+            contentEl.innerHTML = syntaxHighlightJson(pretty);
+            // Set explicit pixel height for scroll - bypass CSS calc/vh issues
+            var maxH = Math.floor(window.innerHeight * 0.75) + 'px';
+            contentEl.style.maxHeight = maxH;
+            contentEl.style.overflowY = 'auto';
+            contentEl.style.display = 'block';
+        }
+
+        function closeJsonModal() {
+            document.getElementById('jsonModalOverlay').classList.remove('active');
+            document.body.style.overflow = '';
+        }
+
+        function copyJsonToClipboard() {
+            navigator.clipboard.writeText(jsonPrettyText).then(function() {
+                // brief visual feedback could be added here
+            });
         }
 
         function deleteRow(rowIdx) {
@@ -2604,7 +2998,7 @@ window.addEventListener('message', event => {
             const message = event.data;
 
             if (message.command === 'queryResults') {
-                updateQueryResults(message.columns, message.rows, message.rowCount);
+                updateQueryResults(message.columns, message.rows, message.rowCount, message.columnTypes);
             } else if (message.command === 'showError') {
                 showErrorInline(message.message);
             } else if (message.command === 'schemaInfo') {

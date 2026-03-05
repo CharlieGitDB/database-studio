@@ -10,7 +10,8 @@ export function getMongoDBWebviewContent(
     connectionId: string,
     connectionName: string,
     resource: string,
-    schema?: string
+    schema?: string,
+    themeColors?: Record<string, string>
 ): string {
     // Convert data rows to ensure proper formatting
     const formattedRows = data.rows.map(row => {
@@ -37,6 +38,14 @@ export function getMongoDBWebviewContent(
         /<meta http-equiv="Content-Security-Policy"[^>]*>/,
         `<meta http-equiv="Content-Security-Policy" content="${csp}">`
     );
+
+    // Inject theme token colors as CSS custom properties
+    const themeColorCSS = themeColors
+        ? Object.entries(themeColors)
+            .map(([key, value]) => `            ${key}: ${value};`)
+            .join('\n')
+        : '';
+    html = html.replace('__THEME_CSS__', themeColorCSS);
 
     // Replace script placeholder with inline script
     html = html.replace(
