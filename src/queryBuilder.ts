@@ -23,7 +23,7 @@ export class QueryBuilder {
 
         // JOIN clauses
         if (state.joins.length > 0) {
-            parts.push(this.buildJoinClauses(state.joins, dbType));
+            parts.push(this.buildJoinClauses(state.joins, dbType, state.schema));
         }
 
         // WHERE clause
@@ -91,9 +91,13 @@ export class QueryBuilder {
         return `FROM ${tableName}`;
     }
 
-    private static buildJoinClauses(joins: JoinClause[], dbType: string): string {
+    private static buildJoinClauses(joins: JoinClause[], dbType: string, schema?: string): string {
         return joins.map(join => {
-            const joinTable = this.quoteIdentifier(join.table, dbType);
+            let joinTable = this.quoteIdentifier(join.table, dbType);
+            // Add schema prefix for PostgreSQL
+            if (dbType === 'postgresql' && schema) {
+                joinTable = `${this.quoteIdentifier(schema, dbType)}.${joinTable}`;
+            }
             const leftCol = this.quoteIdentifier(join.leftColumn, dbType);
             const rightCol = this.quoteIdentifier(join.rightColumn, dbType);
 
@@ -269,14 +273,16 @@ export class QueryBuilder {
             // Remove semicolon and trim
             sql = sql.trim().replace(/;$/, '');
 
-            // Extract table name from FROM clause
-            const fromMatch = sql.match(/FROM\s+(?:"?(\w+)"?\."?)?(\w+)/i);
+            // Extract table name from FROM clause (handles both "schema"."table" and `table` quoting)
+            const fromMatch = sql.match(/FROM\s+(?:(?:"([^"]+)"|`([^`]+)`|(\w+))\.)?(?:"([^"]+)"|`([^`]+)`|(\w+))/i);
             if (!fromMatch) {
                 return null;
             }
 
-            const table = fromMatch[2];
-            const extractedSchema = fromMatch[1] || schema;
+            // Groups: 1=quoted schema, 2=backtick schema, 3=unquoted schema,
+            //         4=quoted table, 5=backtick table, 6=unquoted table
+            const table = fromMatch[4] || fromMatch[5] || fromMatch[6];
+            const extractedSchema = fromMatch[1] || fromMatch[2] || fromMatch[3] || schema;
 
             const state: QueryBuilderState = {
                 table,

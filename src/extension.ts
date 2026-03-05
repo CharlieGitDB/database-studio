@@ -172,7 +172,7 @@ export function activate(context: vscode.ExtensionContext) {
                     } else if (config.type === 'postgresql') {
                         items = await (client as any).getTables();
                     } else if (config.type === 'mongodb') {
-                        items = await (client as any).getCollections();
+                        items = await (client as any).getCollections(item.databaseName);
                     } else if (config.type === 'redis') {
                         items = await (client as any).getKeys().then((keys: any[]) => keys.map(k => k.key));
                     }
