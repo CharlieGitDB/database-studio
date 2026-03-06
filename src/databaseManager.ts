@@ -1,4 +1,4 @@
-import { ConnectionConfig, DatabaseType } from './types';
+import { ConnectionConfig } from './types';
 import { RedisClient } from './clients/redisClient';
 import { MySQLClient } from './clients/mysqlClient';
 import { PostgresClient } from './clients/postgresClient';

@@ -1,11 +1,8 @@
 import {
     QueryBuilderState,
-    SelectColumn,
     FilterCondition,
     JoinClause,
     OrderByClause,
-    AggregateFunction,
-    FilterOperator
 } from './types';
 
 export class QueryBuilder {

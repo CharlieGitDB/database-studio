@@ -4,7 +4,6 @@ import { DatabaseManager } from './databaseManager';
 import { DatabaseTreeDataProvider } from './treeDataProvider';
 import { DataViewerPanel } from './webviewProvider';
 import { ConnectionFormPanel } from './connectionFormPanel';
-import { ConnectionConfig, DatabaseType } from './types';
 
 export function activate(context: vscode.ExtensionContext) {
     console.log('Database Studio by Reswob extension is now active');

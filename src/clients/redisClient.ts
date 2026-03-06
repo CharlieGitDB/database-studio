@@ -83,25 +83,28 @@ export class RedisClient {
             case 'string':
                 await this.client.set(key, value);
                 break;
-            case 'hash':
+            case 'hash': {
                 const hashData = JSON.parse(value);
                 await this.client.hset(key, hashData);
                 break;
-            case 'list':
+            }
+            case 'list': {
                 const listData = JSON.parse(value);
                 await this.client.del(key);
                 if (Array.isArray(listData)) {
                     await this.client.rpush(key, ...listData);
                 }
                 break;
-            case 'set':
+            }
+            case 'set': {
                 const setData = JSON.parse(value);
                 await this.client.del(key);
                 if (Array.isArray(setData)) {
                     await this.client.sadd(key, ...setData);
                 }
                 break;
-            case 'zset':
+            }
+            case 'zset': {
                 const zsetData = JSON.parse(value);
                 await this.client.del(key);
                 if (Array.isArray(zsetData)) {
@@ -111,6 +114,7 @@ export class RedisClient {
                     }
                 }
                 break;
+            }
             default:
                 throw new Error(`Unsupported type: ${type}`);
         }

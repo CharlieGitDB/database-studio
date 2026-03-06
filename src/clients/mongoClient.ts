@@ -105,6 +105,7 @@ export class MongoDBClient {
         }
 
         const collection = targetDb.collection(collectionName);
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
         const { _id, ...updateFields } = updates;
 
         let objectId: ObjectId;

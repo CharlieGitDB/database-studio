@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { ConnectionManager } from './connectionManager';
-import { ConnectionConfig, DatabaseType, MetadataFolderType, ColumnInfo, ConstraintInfo, IndexInfo, RuleInfo, TriggerInfo } from './types';
+import { DatabaseType, MetadataFolderType, ColumnInfo, ConstraintInfo, IndexInfo, RuleInfo, TriggerInfo } from './types';
 import { DatabaseManager } from './databaseManager';
 
 export class DatabaseTreeItem extends vscode.TreeItem {
