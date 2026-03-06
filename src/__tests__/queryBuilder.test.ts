@@ -508,7 +508,7 @@ describe('QueryBuilder', () => {
         });
 
         it('should use provided schema when not in query', () => {
-            const state = QueryBuilder.parseSQL('SELECT * FROM users;', 'custom');
+            const state = QueryBuilder.parseSQL('SELECT * FROM users;', 'postgresql', 'custom');
             expect(state!.schema).toBe('custom');
         });
 
