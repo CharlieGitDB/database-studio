@@ -24,7 +24,7 @@ All notable changes to the "Database Studio by Reswob" extension will be documen
 ### Fixed
 - MySQL `getColumns`, `getConstraints`, `getIndexes`, and `getTriggers` now receive the database name for correct metadata lookups
 
-## [1.1.2] - 2026-03-06
+## [1.1.3] - 2026-03-06
 
 ### Added
 - JSON viewer modal for PostgreSQL and MySQL JSON/JSONB columns with syntax-highlighted pretty-print, click-to-expand cells, and copy-to-clipboard
