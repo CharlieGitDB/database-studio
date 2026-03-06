@@ -3,6 +3,27 @@
 All notable changes to the "Database Studio by Reswob" extension will be documented in this file.
 
 
+## [1.3.0] - 2026-03-06
+
+### Added
+- MySQL multi-database browsing — connections now list all user databases, with tables nested under each database
+- Database-qualified queries for MySQL — SELECT, UPDATE, and DELETE statements use `database`.`table` syntax to prevent cross-database errors
+- Sidebar connections grouped by database type (MongoDB, MySQL, PostgreSQL, Redis) with alphabetical sorting
+- Full SQL parser for the query builder — parses SELECT columns (with aggregates and aliases), WHERE, JOINs, ORDER BY, GROUP BY, LIMIT, and OFFSET
+- Bidirectional sync between SQL Editor and Query Builder tabs — edits in either tab are reflected when switching
+- `parseSQL` webview message handler for backend SQL-to-builder-state conversion
+- `getDatabases()` method on MySQL client that queries `INFORMATION_SCHEMA.SCHEMATA` and filters system databases
+- MySQL `USE` statement issued before query execution when a database context is provided
+
+### Changed
+- Sidebar tree root level now shows type group nodes instead of flat connections; connection labels no longer include the database type suffix
+- Query builder `parseSQL` now accepts a `dbType` parameter for dialect-aware identifier quoting
+- `applyLoadedQuery` reuses shared `applyColumnsSelection` helper and syncs loaded SQL to the editor
+- `updateBuilder` collapses all-columns-selected with no aggregates/aliases into `SELECT *`
+
+### Fixed
+- MySQL `getColumns`, `getConstraints`, `getIndexes`, and `getTriggers` now receive the database name for correct metadata lookups
+
 ## [1.2.0] - 2026-03-06
 
 ### Added
