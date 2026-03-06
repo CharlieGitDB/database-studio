@@ -74,6 +74,38 @@ describe('MySQLClient', () => {
         });
     });
 
+    describe('getDatabases', () => {
+        it('should return list of user databases excluding system databases', async () => {
+            await client.connect(mockConfig);
+            mockQuery.mockResolvedValue([[
+                { SCHEMA_NAME: 'analytics' },
+                { SCHEMA_NAME: 'myapp' },
+            ]]);
+
+            const databases = await client.getDatabases();
+            expect(databases).toEqual(['analytics', 'myapp']);
+            expect(mockQuery).toHaveBeenCalledWith(
+                expect.stringContaining('INFORMATION_SCHEMA.SCHEMATA')
+            );
+        });
+
+        it('should filter out system databases', async () => {
+            await client.connect(mockConfig);
+            mockQuery.mockResolvedValue([[]]);
+
+            await client.getDatabases();
+            const query = mockQuery.mock.calls[0][0];
+            expect(query).toContain('information_schema');
+            expect(query).toContain('performance_schema');
+            expect(query).toContain('mysql');
+            expect(query).toContain('sys');
+        });
+
+        it('should throw if not connected', async () => {
+            await expect(client.getDatabases()).rejects.toThrow('Not connected');
+        });
+    });
+
     describe('getTables', () => {
         it('should return list of table names using INFORMATION_SCHEMA', async () => {
             await client.connect(mockConfig);
@@ -84,6 +116,33 @@ describe('MySQLClient', () => {
 
             const tables = await client.getTables();
             expect(tables).toEqual(['orders', 'users']);
+            expect(mockQuery).toHaveBeenCalledWith(
+                expect.stringContaining('INFORMATION_SCHEMA.TABLES'),
+                ['testdb']
+            );
+        });
+
+        it('should use explicit database name when provided', async () => {
+            await client.connect(mockConfig);
+            mockQuery.mockResolvedValue([[
+                { TABLE_NAME: 'users' },
+            ]]);
+
+            const tables = await client.getTables('customdb');
+            expect(tables).toEqual(['users']);
+            expect(mockQuery).toHaveBeenCalledWith(
+                expect.stringContaining('INFORMATION_SCHEMA.TABLES'),
+                ['customdb']
+            );
+        });
+
+        it('should fall back to connection config database when no parameter given', async () => {
+            await client.connect(mockConfig);
+            mockQuery.mockResolvedValue([[
+                { TABLE_NAME: 'users' },
+            ]]);
+
+            await client.getTables();
             expect(mockQuery).toHaveBeenCalledWith(
                 expect.stringContaining('INFORMATION_SCHEMA.TABLES'),
                 ['testdb']
@@ -131,7 +190,36 @@ describe('MySQLClient', () => {
             mockQuery.mockResolvedValue([[], []]);
 
             await client.getTableData('users', 50);
-            expect(mockQuery).toHaveBeenCalledWith('SELECT * FROM `users` LIMIT 50');
+            expect(mockQuery).toHaveBeenCalledWith('SELECT * FROM `testdb`.`users` LIMIT 50');
+        });
+
+        it('should qualify table name with explicit database', async () => {
+            await client.connect(mockConfig);
+            mockQuery.mockResolvedValue([[], []]);
+
+            await client.getTableData('users', 100, 'myapp');
+            expect(mockQuery).toHaveBeenCalledWith('SELECT * FROM `myapp`.`users` LIMIT 100');
+        });
+
+        it('should fall back to connection config database when no database param', async () => {
+            await client.connect(mockConfig);
+            mockQuery.mockResolvedValue([[], []]);
+
+            await client.getTableData('users');
+            expect(mockQuery).toHaveBeenCalledWith('SELECT * FROM `testdb`.`users` LIMIT 100');
+        });
+
+        it('should use unqualified table name when no database available', async () => {
+            mockCreateConnection.mockResolvedValue({
+                query: mockQuery,
+                end: mockEnd,
+                config: {},
+            });
+            await client.connect(mockConfig);
+            mockQuery.mockResolvedValue([[], []]);
+
+            await client.getTableData('users');
+            expect(mockQuery).toHaveBeenCalledWith('SELECT * FROM `users` LIMIT 100');
         });
 
         it('should throw if not connected', async () => {
@@ -147,8 +235,20 @@ describe('MySQLClient', () => {
             await client.updateRecord('users', 'id', 1, { name: 'Charlie', age: 30 });
 
             expect(mockQuery).toHaveBeenCalledWith(
-                'UPDATE `users` SET `name` = ?, `age` = ? WHERE `id` = ?',
+                'UPDATE `testdb`.`users` SET `name` = ?, `age` = ? WHERE `id` = ?',
                 ['Charlie', 30, 1]
+            );
+        });
+
+        it('should qualify table with explicit database', async () => {
+            await client.connect(mockConfig);
+            mockQuery.mockResolvedValue([{ affectedRows: 1 }]);
+
+            await client.updateRecord('users', 'id', 1, { name: 'Charlie' }, 'myapp');
+
+            expect(mockQuery).toHaveBeenCalledWith(
+                'UPDATE `myapp`.`users` SET `name` = ? WHERE `id` = ?',
+                ['Charlie', 1]
             );
         });
 
@@ -165,7 +265,19 @@ describe('MySQLClient', () => {
             await client.deleteRecord('users', 'id', 1);
 
             expect(mockQuery).toHaveBeenCalledWith(
-                'DELETE FROM `users` WHERE `id` = ?',
+                'DELETE FROM `testdb`.`users` WHERE `id` = ?',
+                [1]
+            );
+        });
+
+        it('should qualify table with explicit database', async () => {
+            await client.connect(mockConfig);
+            mockQuery.mockResolvedValue([{ affectedRows: 1 }]);
+
+            await client.deleteRecord('users', 'id', 1, 'myapp');
+
+            expect(mockQuery).toHaveBeenCalledWith(
+                'DELETE FROM `myapp`.`users` WHERE `id` = ?',
                 [1]
             );
         });

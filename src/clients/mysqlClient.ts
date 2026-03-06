@@ -21,12 +21,25 @@ export class MySQLClient {
         }
     }
 
-    async getTables(): Promise<string[]> {
+    async getDatabases(): Promise<string[]> {
         if (!this.connection) {
             throw new Error('Not connected');
         }
 
-        const dbName = (this.connection as any).config?.database;
+        const [rows] = await this.connection.query(
+            `SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA
+             WHERE SCHEMA_NAME NOT IN ('information_schema', 'performance_schema', 'mysql', 'sys')
+             ORDER BY SCHEMA_NAME`
+        );
+        return (rows as any[]).map(row => (row as any).SCHEMA_NAME as string);
+    }
+
+    async getTables(database?: string): Promise<string[]> {
+        if (!this.connection) {
+            throw new Error('Not connected');
+        }
+
+        const dbName = database || (this.connection as any).config?.database;
         const [rows] = await this.connection.query(
             `SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES
              WHERE TABLE_SCHEMA = ? AND TABLE_TYPE = 'BASE TABLE'
@@ -36,12 +49,17 @@ export class MySQLClient {
         return (rows as any[]).map(row => (row as any).TABLE_NAME as string);
     }
 
-    async getTableData(tableName: string, limit: number = 100): Promise<QueryResult> {
+    private qualifiedTable(tableName: string, database?: string): string {
+        const dbName = database || (this.connection as any).config?.database;
+        return dbName ? `\`${dbName}\`.\`${tableName}\`` : `\`${tableName}\``;
+    }
+
+    async getTableData(tableName: string, limit: number = 100, database?: string): Promise<QueryResult> {
         if (!this.connection) {
             throw new Error('Not connected');
         }
 
-        const query = `SELECT * FROM \`${tableName}\` LIMIT ${limit}`;
+        const query = `SELECT * FROM ${this.qualifiedTable(tableName, database)} LIMIT ${limit}`;
         const [rows, fields] = await this.connection.query(query);
 
         const fieldPackets = fields as mysql.FieldPacket[];
@@ -58,7 +76,7 @@ export class MySQLClient {
         };
     }
 
-    async updateRecord(tableName: string, primaryKey: string, primaryKeyValue: any, updates: Record<string, any>): Promise<void> {
+    async updateRecord(tableName: string, primaryKey: string, primaryKeyValue: any, updates: Record<string, any>, database?: string): Promise<void> {
         if (!this.connection) {
             throw new Error('Not connected');
         }
@@ -68,17 +86,17 @@ export class MySQLClient {
             .join(', ');
 
         const values = [...Object.values(updates), primaryKeyValue];
-        const query = `UPDATE \`${tableName}\` SET ${setClause} WHERE \`${primaryKey}\` = ?`;
+        const query = `UPDATE ${this.qualifiedTable(tableName, database)} SET ${setClause} WHERE \`${primaryKey}\` = ?`;
 
         await this.connection.query(query, values);
     }
 
-    async deleteRecord(tableName: string, primaryKey: string, primaryKeyValue: any): Promise<void> {
+    async deleteRecord(tableName: string, primaryKey: string, primaryKeyValue: any, database?: string): Promise<void> {
         if (!this.connection) {
             throw new Error('Not connected');
         }
 
-        const query = `DELETE FROM \`${tableName}\` WHERE \`${primaryKey}\` = ?`;
+        const query = `DELETE FROM ${this.qualifiedTable(tableName, database)} WHERE \`${primaryKey}\` = ?`;
         await this.connection.query(query, [primaryKeyValue]);
     }
 
