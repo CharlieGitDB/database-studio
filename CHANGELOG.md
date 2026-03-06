@@ -3,6 +3,34 @@
 All notable changes to the "Database Studio by Reswob" extension will be documented in this file.
 
 
+## [1.2.0] - 2026-03-06
+
+### Added
+- JSON viewer modal for PostgreSQL and MySQL JSON/JSONB columns with syntax-highlighted pretty-print, click-to-expand cells, and copy-to-clipboard
+- Theme-matched syntax highlighting for CodeMirror editors — reads the active VS Code color theme's token colors and applies them via CSS custom properties (replaces hardcoded Monokai theme)
+- Loading bar with spinner shown during query execution, refresh, and aggregation operations
+- Column type detection (`json`/`other`) in PostgreSQL and MySQL clients, surfaced via new `columnTypes` field on `QueryResult`
+- Redis sorted set (`zset`) write support
+- Jest test infrastructure with `ts-jest`, vscode mock, and comprehensive unit tests across all clients, providers, and message handlers
+- `CONTRIBUTING.md` guide
+
+### Fixed
+- MongoDB ObjectId validation — invalid IDs now throw a clear error instead of crashing
+- MongoDB query execution passes collection name and database name correctly
+- MongoDB document edit/delete uses `_id` column index lookup instead of assuming column 0
+- MySQL table listing uses `INFORMATION_SCHEMA.TABLES` with parameterized query instead of `SHOW TABLES`
+- MySQL table/column names properly backtick-quoted in default queries
+- PostgreSQL schema name escaped in `SET search_path` to prevent SQL injection
+- Query builder JOIN clauses now include schema prefix for PostgreSQL
+- Query builder `parseSQL` handles quoted and backtick-quoted identifiers in FROM clauses
+- CTE (`WITH`) read-only detection checks for DML keywords inside the body instead of blindly allowing all CTEs
+- Tree data provider properly awaits async folder-item methods (columns, constraints, indexes, rules, triggers)
+
+### Changed
+- `create-vsix` script now runs tests and bumps patch version before packaging
+- Extension marketplace categories updated to include "Data Science" and "Visualization"
+- Removed stale setup and testing docs (`GIT_SETUP_REVERT.md`, `TEST_MONGODB_WEBVIEW.md`)
+
 ## [1.1.2] - 2026-03-05
 
 ### Fixed
