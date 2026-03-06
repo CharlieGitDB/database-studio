@@ -48,6 +48,7 @@ describe('RedisClient', () => {
 
     describe('connect', () => {
         it('should create Redis client with correct config and connect', async () => {
+            // eslint-disable-next-line @typescript-eslint/no-var-requires
             const Redis = require('ioredis').default;
             await client.connect(mockConfig);
 

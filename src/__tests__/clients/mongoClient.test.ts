@@ -89,6 +89,7 @@ describe('MongoDBClient', () => {
 
     describe('connect', () => {
         it('should connect with auth credentials', async () => {
+            // eslint-disable-next-line @typescript-eslint/no-var-requires
             const { MongoClient } = require('mongodb');
             await client.connect(mockConfig);
 
@@ -99,6 +100,7 @@ describe('MongoDBClient', () => {
         });
 
         it('should connect without auth credentials', async () => {
+            // eslint-disable-next-line @typescript-eslint/no-var-requires
             const { MongoClient } = require('mongodb');
             await client.connect(mockConfigNoAuth);
 

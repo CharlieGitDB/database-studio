@@ -1,4 +1,4 @@
-import { QueryResult, SavedQuery, QueryBuilderState } from '../types';
+import { SavedQuery, QueryBuilderState } from '../types';
 
 // Must declare mock fns before jest.mock calls since they get hoisted
 const mockPostMessage = jest.fn();
@@ -148,7 +148,7 @@ describe('DataViewerPanel - Message Handlers', () => {
         };
         return {
             webview: panelWebview,
-            onDidDispose: (handler: any) => ({ dispose: jest.fn() }),
+            onDidDispose: (_handler: any) => ({ dispose: jest.fn() }),
             reveal: jest.fn(),
             dispose: jest.fn(),
         };
@@ -213,7 +213,7 @@ describe('DataViewerPanel - Message Handlers', () => {
                 'conn-1', 'mykey'
             );
 
-            const html = await waitForHtml();
+            await waitForHtml();
             expect(mockRedisGetValue).toHaveBeenCalledWith('mykey');
         });
 

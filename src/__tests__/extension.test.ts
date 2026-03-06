@@ -99,14 +99,14 @@ import { activate, deactivate } from '../extension';
 
 describe('Extension', () => {
     let context: any;
-    let registeredCommands: Record<string, Function>;
+    let registeredCommands: Record<string, (...args: any[]) => any>;
 
     beforeEach(() => {
         jest.clearAllMocks();
         registeredCommands = {};
 
         mockRegisterCommand.mockImplementation(
-            (name: string, handler: Function) => {
+            (name: string, handler: (...args: any[]) => any) => {
                 registeredCommands[name] = handler;
                 return { dispose: jest.fn() };
             }

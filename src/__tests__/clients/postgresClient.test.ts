@@ -34,6 +34,7 @@ describe('PostgresClient', () => {
 
     describe('connect', () => {
         it('should create a pg client with correct config and connect', async () => {
+            // eslint-disable-next-line @typescript-eslint/no-var-requires
             const { Client } = require('pg');
             await client.connect(mockConfig);
 

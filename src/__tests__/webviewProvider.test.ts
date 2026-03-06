@@ -2,8 +2,6 @@ import { QueryResult } from '../types';
 
 // Must declare mock fns before jest.mock calls since they get hoisted
 const mockPostMessage = jest.fn();
-const mockOnDidReceiveMessage = jest.fn();
-const mockOnDidDispose = jest.fn();
 const mockAsWebviewUri = jest.fn((uri: any) => uri);
 const mockReveal = jest.fn();
 const mockDispose = jest.fn();
@@ -81,7 +79,7 @@ describe('DataViewerPanel - JSON column type support', () => {
         };
         return {
             webview: panelWebview,
-            onDidDispose: (handler: any) => ({ dispose: jest.fn() }),
+            onDidDispose: (_handler: any) => ({ dispose: jest.fn() }),
             reveal: mockReveal,
             dispose: mockDispose,
         };

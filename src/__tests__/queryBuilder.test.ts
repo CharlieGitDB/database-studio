@@ -1,5 +1,5 @@
 import { QueryBuilder } from '../queryBuilder';
-import { QueryBuilderState, FilterCondition, JoinClause, OrderByClause, SelectColumn } from '../types';
+import { QueryBuilderState } from '../types';
 
 describe('QueryBuilder', () => {
     describe('generateSQL', () => {

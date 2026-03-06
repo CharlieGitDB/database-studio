@@ -53,6 +53,7 @@ jest.mock('../clients/mysqlClient', () => ({ MySQLClient: jest.fn() }));
 jest.mock('../clients/postgresClient', () => ({ PostgresClient: jest.fn() }));
 jest.mock('../clients/mongoClient', () => ({ MongoDBClient: jest.fn() }));
 
+// eslint-disable-next-line @typescript-eslint/no-var-requires
 const vscode = require('vscode');
 
 describe('ConnectionFormPanel', () => {
