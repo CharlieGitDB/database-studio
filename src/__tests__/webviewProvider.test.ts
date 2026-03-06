@@ -497,4 +497,77 @@ describe('DataViewerPanel - JSON column type support', () => {
             }
         });
     });
+
+    describe('MySQL database-qualified table access', () => {
+        it('should pass database name (schema) to getTableData for MySQL', async () => {
+            const mysqlClient = new MySQLClient();
+            const mockGetTableData = jest.fn().mockResolvedValue({
+                columns: ['id', 'name'],
+                rows: [[1, 'Alice']],
+                columnTypes: ['other', 'other'],
+            } as QueryResult);
+            (mysqlClient as any).getTableData = mockGetTableData;
+
+            mockDatabaseManager.getClient.mockReturnValue(mysqlClient);
+
+            DataViewerPanel.createOrShow(
+                { fsPath: '/mock' } as any,
+                mockDatabaseManager,
+                mockConnectionManager,
+                'conn-1',
+                'users',
+                'myapp'  // database name passed as schema
+            );
+
+            await waitForHtml();
+            expect(mockGetTableData).toHaveBeenCalledWith('users', 100, 'myapp');
+        });
+
+        it('should generate database-qualified default query for MySQL', async () => {
+            const mysqlClient = new MySQLClient();
+            (mysqlClient as any).getTableData = jest.fn().mockResolvedValue({
+                columns: ['id'],
+                rows: [[1]],
+                columnTypes: ['other'],
+            } as QueryResult);
+
+            mockDatabaseManager.getClient.mockReturnValue(mysqlClient);
+
+            DataViewerPanel.createOrShow(
+                { fsPath: '/mock' } as any,
+                mockDatabaseManager,
+                mockConnectionManager,
+                'conn-1',
+                'users',
+                'myapp'
+            );
+
+            const html = await waitForHtml();
+            expect(html).toContain('`myapp`.`users`');
+        });
+
+        it('should work without database name for MySQL', async () => {
+            const mysqlClient = new MySQLClient();
+            const mockGetTableData = jest.fn().mockResolvedValue({
+                columns: ['id'],
+                rows: [[1]],
+                columnTypes: ['other'],
+            } as QueryResult);
+            (mysqlClient as any).getTableData = mockGetTableData;
+
+            mockDatabaseManager.getClient.mockReturnValue(mysqlClient);
+
+            DataViewerPanel.createOrShow(
+                { fsPath: '/mock' } as any,
+                mockDatabaseManager,
+                mockConnectionManager,
+                'conn-1',
+                'users'
+                // no schema/database
+            );
+
+            await waitForHtml();
+            expect(mockGetTableData).toHaveBeenCalledWith('users', 100, undefined);
+        });
+    });
 });

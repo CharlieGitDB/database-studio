@@ -296,7 +296,7 @@ describe('DataViewerPanel - Message Handlers', () => {
                 data: { primaryKey: 'id', primaryKeyValue: 1, updates: { name: 'Bob' } },
             });
 
-            expect(mockMySQLUpdateRecord).toHaveBeenCalledWith('users', 'id', 1, { name: 'Bob' });
+            expect(mockMySQLUpdateRecord).toHaveBeenCalledWith('users', 'id', 1, { name: 'Bob' }, undefined);
         });
 
         it('should delete a MySQL record', async () => {
@@ -313,7 +313,7 @@ describe('DataViewerPanel - Message Handlers', () => {
                 data: { primaryKey: 'id', primaryKeyValue: 1 },
             });
 
-            expect(mockMySQLDeleteRecord).toHaveBeenCalledWith('users', 'id', 1);
+            expect(mockMySQLDeleteRecord).toHaveBeenCalledWith('users', 'id', 1, undefined);
         });
 
         it('should execute a MySQL query', async () => {
@@ -339,6 +339,50 @@ describe('DataViewerPanel - Message Handlers', () => {
             );
         });
 
+        it('should set database context with USE before executing MySQL query when schema is provided', async () => {
+            mockMySQLExecuteQuery.mockResolvedValue({
+                columns: ['id', 'name'], rows: [[1, 'Alice']], columnTypes: ['other', 'other'],
+            });
+
+            DataViewerPanel.createOrShow(
+                { fsPath: '/mock' } as any,
+                mockDatabaseManager, mockConnectionManager, 'conn-1', 'users', 'myapp'
+            );
+
+            await waitForHtml();
+            await messageHandler({
+                command: 'executeQuery',
+                connectionId: 'conn-1',
+                query: 'SELECT * FROM users',
+                schema: 'myapp',
+            });
+
+            expect(mockMySQLExecuteQuery).toHaveBeenCalledWith('USE `myapp`');
+            expect(mockMySQLExecuteQuery).toHaveBeenCalledWith('SELECT * FROM users');
+        });
+
+        it('should not issue USE statement when no schema provided for MySQL query', async () => {
+            mockMySQLExecuteQuery.mockResolvedValue({
+                columns: ['id', 'name'], rows: [[1, 'Alice']], columnTypes: ['other', 'other'],
+            });
+
+            DataViewerPanel.createOrShow(
+                { fsPath: '/mock' } as any,
+                mockDatabaseManager, mockConnectionManager, 'conn-1', 'users'
+            );
+
+            await waitForHtml();
+            mockMySQLExecuteQuery.mockClear();
+            await messageHandler({
+                command: 'executeQuery',
+                connectionId: 'conn-1',
+                query: 'SELECT * FROM users',
+            });
+
+            expect(mockMySQLExecuteQuery).toHaveBeenCalledTimes(1);
+            expect(mockMySQLExecuteQuery).toHaveBeenCalledWith('SELECT * FROM users');
+        });
+
         it('should get MySQL columns', async () => {
             mockMySQLGetColumns.mockResolvedValue([
                 { name: 'id', type: 'int', nullable: false, isPrimaryKey: true, isForeignKey: false },
@@ -356,7 +400,7 @@ describe('DataViewerPanel - Message Handlers', () => {
                 resource: 'users',
             });
 
-            expect(mockMySQLGetColumns).toHaveBeenCalledWith('users');
+            expect(mockMySQLGetColumns).toHaveBeenCalledWith('users', undefined);
             expect(mockPostMessage).toHaveBeenCalledWith(
                 expect.objectContaining({ command: 'columnsData' })
             );

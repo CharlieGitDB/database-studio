@@ -83,6 +83,9 @@ export class DataViewerPanel {
                     case 'getSchemaInfo':
                         await this.sendSchemaInfo(message.connectionId, message.schema);
                         break;
+                    case 'parseSQL':
+                        this.parseSQLToState(message.sql, message.dbType, message.schema);
+                        break;
                 }
             },
             null,
@@ -148,9 +151,10 @@ export class DataViewerPanel {
                     data = await client.getValue(resource);
                 }
             } else if (client instanceof MySQLClient) {
-                data = await client.getTableData(resource);
+                data = await client.getTableData(resource, 100, schema);
                 // Generate default SELECT query for MySQL
-                defaultQuery = `SELECT * FROM \`${resource}\` LIMIT 100;`;
+                const dbPrefix = schema ? `\`${schema}\`.` : '';
+                defaultQuery = `SELECT * FROM ${dbPrefix}\`${resource}\` LIMIT 100;`;
             } else if (client instanceof PostgresClient) {
                 data = await client.getTableData(resource, schema);
                 // Generate default SELECT query for PostgreSQL with schema qualification
@@ -182,7 +186,7 @@ export class DataViewerPanel {
             if (client instanceof RedisClient) {
                 await client.setValue(data.key, data.value, data.type);
             } else if (client instanceof MySQLClient) {
-                await client.updateRecord(resource, data.primaryKey, data.primaryKeyValue, data.updates);
+                await client.updateRecord(resource, data.primaryKey, data.primaryKeyValue, data.updates, schema);
             } else if (client instanceof PostgresClient) {
                 await client.updateRecord(resource, data.primaryKey, data.primaryKeyValue, data.updates, schema);
             } else if (client instanceof MongoDBClient) {
@@ -209,7 +213,7 @@ export class DataViewerPanel {
             if (client instanceof RedisClient) {
                 await client.deleteKey(data.key);
             } else if (client instanceof MySQLClient) {
-                await client.deleteRecord(resource, data.primaryKey, data.primaryKeyValue);
+                await client.deleteRecord(resource, data.primaryKey, data.primaryKeyValue, schema);
             } else if (client instanceof PostgresClient) {
                 await client.deleteRecord(resource, data.primaryKey, data.primaryKeyValue, schema);
             } else if (client instanceof MongoDBClient) {
@@ -295,6 +299,9 @@ export class DataViewerPanel {
                 }
                 data = await client.executeQuery(query);
             } else if (client instanceof MySQLClient) {
+                if (schema) {
+                    await client.executeQuery(`USE \`${schema}\``);
+                }
                 data = await client.executeQuery(query);
             } else if (client instanceof MongoDBClient) {
                 // For MongoDB, resource is the collection name, schema/currentSchema is the database name
@@ -439,7 +446,7 @@ export class DataViewerPanel {
             if (client instanceof PostgresClient) {
                 columns = await client.getColumns(resource, schema || 'public');
             } else if (client instanceof MySQLClient) {
-                columns = await client.getColumns(resource);
+                columns = await client.getColumns(resource, schema);
             } else {
                 // Redis and other non-SQL databases don't have columns
                 this._panel.webview.postMessage({ command: 'columnsData', columns: [] });
@@ -466,7 +473,7 @@ export class DataViewerPanel {
             if (client instanceof PostgresClient) {
                 tables = await client.getTables(schema || 'public');
             } else if (client instanceof MySQLClient) {
-                tables = await client.getTables();
+                tables = await client.getTables(schema);
             } else {
                 // Redis and other non-SQL databases don't have tables
                 this._panel.webview.postMessage({ command: 'tablesData', tables: [] });
@@ -510,6 +517,23 @@ export class DataViewerPanel {
             });
         } catch (error) {
             this.showError(`Failed to generate SQL: ${error}`);
+        }
+    }
+
+    private parseSQLToState(sql: string, dbType: 'mysql' | 'postgresql', schema?: string) {
+        try {
+            const state = QueryBuilder.parseSQL(sql, dbType, schema);
+            this._panel.webview.postMessage({
+                command: 'parsedSQL',
+                state,
+                success: state !== null
+            });
+        } catch (error) {
+            this._panel.webview.postMessage({
+                command: 'parsedSQL',
+                state: null,
+                success: false
+            });
         }
     }
 
@@ -604,6 +628,7 @@ let queryBuilderState = {
 
 let columnsData = [];
 let relatedTablesData = [];
+let pendingStateApply = false;
 
 // Tab switching
 function switchTab(tabName) {
@@ -620,13 +645,132 @@ function switchTab(tabName) {
     if (tabContent) tabContent.classList.add('active');
     if (tabButton) tabButton.classList.add('active');
 
-    if (tabName === 'queryBuilder' && resource && columnsData.length === 0) {
+    // Sync builder SQL to editor when switching to SQL Editor
+    if (tabName === 'sqlEditor') {
+        syncBuilderToEditor();
+    }
+
+    // Sync editor SQL to builder when switching to Query Builder
+    if (tabName === 'queryBuilder') {
+        syncEditorToBuilder();
+
+        if (resource && columnsData.length === 0) {
+            vscode.postMessage({
+                command: 'getColumns',
+                connectionId,
+                resource,
+                schema
+            });
+        }
+    }
+}
+
+function syncBuilderToEditor() {
+    var sqlPreview = document.getElementById('sqlPreview');
+    if (editor && sqlPreview) {
+        var sql = sqlPreview.textContent;
+        if (sql && sql.trim()) {
+            editor.setValue(sql);
+        }
+    }
+}
+
+function syncEditorToBuilder() {
+    if (!editor) return;
+    var sql = editor.getValue().trim();
+    if (!sql) return;
+    // Only attempt to parse SELECT queries
+    if (!/^SELECT\\b/i.test(sql)) return;
+    vscode.postMessage({
+        command: 'parseSQL',
+        sql: sql,
+        dbType: dbType,
+        schema: schema
+    });
+}
+
+function applyColumnsSelection() {
+    // SELECT * (empty selectColumns) — check all boxes and populate selectColumns
+    if (queryBuilderState.selectColumns.length === 0 && columnsData.length > 0) {
+        columnsData.forEach(function(col, index) {
+            var checkbox = document.getElementById('col_' + index);
+            var controls = document.getElementById('controls_' + index);
+            if (!checkbox || !controls) return;
+            checkbox.checked = true;
+            controls.style.display = 'flex';
+            var aggregateSelect = controls.querySelector('select');
+            var aliasInput = controls.querySelector('input');
+            if (aggregateSelect) aggregateSelect.value = 'NONE';
+            if (aliasInput) aliasInput.value = '';
+            queryBuilderState.selectColumns.push({
+                column: col.name,
+                alias: undefined,
+                aggregate: 'NONE'
+            });
+        });
+        return;
+    }
+
+    columnsData.forEach(function(col, index) {
+        var checkbox = document.getElementById('col_' + index);
+        var controls = document.getElementById('controls_' + index);
+        if (!checkbox || !controls) return;
+        var selectCol = queryBuilderState.selectColumns.find(function(sc) { return sc.column === col.name; });
+
+        if (selectCol) {
+            checkbox.checked = true;
+            controls.style.display = 'flex';
+            var aggregateSelect = controls.querySelector('select');
+            var aliasInput = controls.querySelector('input');
+            if (aggregateSelect) aggregateSelect.value = selectCol.aggregate;
+            if (aliasInput) aliasInput.value = selectCol.alias || '';
+        } else {
+            checkbox.checked = false;
+            controls.style.display = 'none';
+        }
+    });
+}
+
+function applyParsedState(state) {
+    var tableChanged = state.table && state.table !== queryBuilderState.table;
+
+    queryBuilderState = JSON.parse(JSON.stringify(state));
+
+    if (tableChanged) {
+        var tableSelector = document.getElementById('tableSelector');
+        if (tableSelector) tableSelector.value = state.table;
+
+        pendingStateApply = true;
+        columnsData = [];
         vscode.postMessage({
             command: 'getColumns',
             connectionId,
-            resource,
-            schema
+            resource: state.table,
+            schema: state.schema
         });
+        vscode.postMessage({
+            command: 'getSavedQueries',
+            table: state.table
+        });
+        // Apply non-column state now; columns will be applied when columnsData arrives
+        document.getElementById('distinctCheck').checked = queryBuilderState.distinct;
+        document.getElementById('limitInput').value = queryBuilderState.limit || '';
+        document.getElementById('offsetInput').value = queryBuilderState.offset !== undefined ? queryBuilderState.offset : '';
+        renderFilters();
+        renderJoins();
+        renderOrderBy();
+    } else {
+        // Same table, apply everything including column selections
+        document.getElementById('distinctCheck').checked = queryBuilderState.distinct;
+        document.getElementById('limitInput').value = queryBuilderState.limit || '';
+        document.getElementById('offsetInput').value = queryBuilderState.offset !== undefined ? queryBuilderState.offset : '';
+        if (columnsData.length > 0) {
+            applyColumnsSelection();
+        }
+        renderFilters();
+        renderJoins();
+        renderOrderBy();
+        updateBuilder();
     }
 }
 
@@ -768,6 +912,11 @@ function renderColumns(columns) {
             </div>
         </div>
     \`).join('');
+
+    // Apply column selection state (handles SELECT * and parsed/loaded states)
+    pendingStateApply = false;
+    applyColumnsSelection();
+    updateBuilder();
 }
 
 function toggleColumn(index) {
@@ -1039,9 +1188,20 @@ function updateBuilder() {
     const offsetValue = document.getElementById('offsetInput')?.value;
     queryBuilderState.offset = offsetValue ? parseInt(offsetValue) : undefined;
 
+    // When all columns are selected with no aggregates/aliases, use SELECT *
+    var stateToSend = JSON.parse(JSON.stringify(queryBuilderState));
+    if (columnsData.length > 0 && stateToSend.selectColumns.length === columnsData.length) {
+        var allPlain = stateToSend.selectColumns.every(function(sc) {
+            return (!sc.aggregate || sc.aggregate === 'NONE') && !sc.alias;
+        });
+        if (allPlain) {
+            stateToSend.selectColumns = [];
+        }
+    }
+
     vscode.postMessage({
         command: 'generateSQL',
-        builderState: queryBuilderState,
+        builderState: stateToSend,
         dbType: dbType
     });
 }
@@ -1179,33 +1339,18 @@ function applyLoadedQuery(query) {
 
     document.getElementById('distinctCheck').checked = queryBuilderState.distinct;
     document.getElementById('limitInput').value = queryBuilderState.limit || '';
-    document.getElementById('offsetInput').value = queryBuilderState.offset || 0;
+    document.getElementById('offsetInput').value = queryBuilderState.offset !== undefined ? queryBuilderState.offset : '';
 
-    columnsData.forEach((col, index) => {
-        const checkbox = document.getElementById(\`col_\${index}\`);
-        const controls = document.getElementById(\`controls_\${index}\`);
-        const selectCol = queryBuilderState.selectColumns.find(sc => sc.column === col.name);
-
-        if (selectCol) {
-            checkbox.checked = true;
-            controls.style.display = 'flex';
-
-            const aggregateSelect = controls.querySelector('select');
-            const aliasInput = controls.querySelector('input');
-            if (aggregateSelect) aggregateSelect.value = selectCol.aggregate;
-            if (aliasInput) aliasInput.value = selectCol.alias || '';
-        } else {
-            checkbox.checked = false;
-            controls.style.display = 'none';
-        }
-    });
-
+    applyColumnsSelection();
     renderFilters();
     renderJoins();
     renderOrderBy();
     updateBuilder();
 
-    // Query loaded successfully - no alert needed since it's filtered by table
+    // Also sync to SQL editor
+    if (editor && query.sql) {
+        editor.setValue(query.sql);
+    }
 }
 
 window.addEventListener('message', event => {
@@ -1226,6 +1371,11 @@ window.addEventListener('message', event => {
             break;
         case 'loadedQuery':
             applyLoadedQuery(message.query);
+            break;
+        case 'parsedSQL':
+            if (message.success && message.state) {
+                applyParsedState(message.state);
+            }
             break;
     }
 });
@@ -2730,6 +2880,8 @@ ${themeColorCSS}
             }
             showLoading();
             vscode.postMessage({ command: 'executeQuery', connectionId, query, schema });
+            // Sync SQL editor content to query builder state
+            syncEditorToBuilder();
         }
 
         function showLoading() {
