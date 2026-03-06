@@ -1,13 +1,13 @@
 import * as vscode from 'vscode';
 import { ConnectionManager } from './connectionManager';
-import { DatabaseType, MetadataFolderType, ColumnInfo, ConstraintInfo, IndexInfo, RuleInfo, TriggerInfo } from './types';
+import { ConnectionConfig, DatabaseType, MetadataFolderType, ColumnInfo, ConstraintInfo, IndexInfo, RuleInfo, TriggerInfo } from './types';
 import { DatabaseManager } from './databaseManager';
 
 export class DatabaseTreeItem extends vscode.TreeItem {
     constructor(
         public readonly label: string,
         public readonly collapsibleState: vscode.TreeItemCollapsibleState,
-        public readonly itemType: 'connection' | 'schema' | 'database' | 'table' | 'collection' | 'key'
+        public readonly itemType: 'typeGroup' | 'connection' | 'schema' | 'database' | 'table' | 'collection' | 'key'
             | 'metadataFolder' | 'column' | 'constraint' | 'index' | 'rule' | 'trigger',
         public readonly connectionId?: string,
         public readonly schemaName?: string,
@@ -21,7 +21,9 @@ export class DatabaseTreeItem extends vscode.TreeItem {
 
         this.contextValue = isConnected ? `${itemType}-connected` : `${itemType}-disconnected`;
 
-        if (itemType === 'connection') {
+        if (itemType === 'typeGroup') {
+            this.iconPath = new vscode.ThemeIcon('database');
+        } else if (itemType === 'connection') {
             this.iconPath = new vscode.ThemeIcon(isConnected ? 'database' : 'debug-disconnect');
         } else if (itemType === 'table' || itemType === 'collection') {
             this.iconPath = new vscode.ThemeIcon('symbol-field');
@@ -103,12 +105,47 @@ export class DatabaseTreeDataProvider implements vscode.TreeDataProvider<Databas
 
     async getChildren(element?: DatabaseTreeItem): Promise<DatabaseTreeItem[]> {
         if (!element) {
-            // Root level - show all connections
+            // Root level - show connections grouped by database type
             const connections = this.connectionManager.getAllConnections();
+            const typeGroups = new Map<DatabaseType, ConnectionConfig[]>();
+            for (const conn of connections) {
+                const group = typeGroups.get(conn.type) || [];
+                group.push(conn);
+                typeGroups.set(conn.type, group);
+            }
+
+            // Sort type groups alphanumerically by display name
+            const sortedTypes = Array.from(typeGroups.keys()).sort((a, b) =>
+                this.getTypeDisplayName(a).localeCompare(this.getTypeDisplayName(b))
+            );
+
+            return sortedTypes.map(type =>
+                new DatabaseTreeItem(
+                    this.getTypeDisplayName(type),
+                    vscode.TreeItemCollapsibleState.Expanded,
+                    'typeGroup',
+                    undefined,
+                    undefined,
+                    undefined,
+                    undefined,
+                    false,
+                    undefined,
+                    { databaseType: type }
+                )
+            );
+        }
+
+        if (element.itemType === 'typeGroup') {
+            // Show connections of this type, sorted alphanumerically
+            const databaseType = element.metadata?.databaseType as DatabaseType;
+            const connections = this.connectionManager.getAllConnections()
+                .filter(conn => conn.type === databaseType)
+                .sort((a, b) => a.name.localeCompare(b.name));
+
             return connections.map(conn => {
                 const isConnected = this.connectedDatabases.has(conn.id);
                 return new DatabaseTreeItem(
-                    `${conn.name} (${conn.type})`,
+                    conn.name,
                     vscode.TreeItemCollapsibleState.Collapsed,
                     'connection',
                     conn.id,
@@ -157,16 +194,15 @@ export class DatabaseTreeDataProvider implements vscode.TreeDataProvider<Databas
                     );
                 } else if (config.type === 'mysql') {
                     const mysqlClient = client as any; // MySQLClient
-                    const tables = await mysqlClient.getTables();
-                    return tables.map((table: string) =>
+                    const databases = await mysqlClient.getDatabases();
+                    return databases.map((db: string) =>
                         new DatabaseTreeItem(
-                            table,
+                            db,
                             vscode.TreeItemCollapsibleState.Collapsed,
-                            'table',
+                            'database',
                             element.connectionId,
                             undefined,
-                            undefined,
-                            table
+                            db
                         )
                     );
                 } else if (config.type === 'redis') {
@@ -256,7 +292,21 @@ export class DatabaseTreeDataProvider implements vscode.TreeDataProvider<Databas
                     return [];
                 }
 
-                if (config.type === 'redis') {
+                if (config.type === 'mysql') {
+                    const mysqlClient = client as any; // MySQLClient
+                    const tables = await mysqlClient.getTables(element.databaseName);
+                    return tables.map((table: string) =>
+                        new DatabaseTreeItem(
+                            table,
+                            vscode.TreeItemCollapsibleState.Collapsed,
+                            'table',
+                            element.connectionId,
+                            undefined,
+                            element.databaseName,
+                            table
+                        )
+                    );
+                } else if (config.type === 'redis') {
                     const redisClient = client as any; // RedisClient
                     console.log('Fetching Redis keys for connection:', element.connectionId);
                     const keys = await redisClient.getKeys();
@@ -309,6 +359,16 @@ export class DatabaseTreeDataProvider implements vscode.TreeDataProvider<Databas
         }
 
         return [];
+    }
+
+    private getTypeDisplayName(type: DatabaseType): string {
+        const names: Record<DatabaseType, string> = {
+            mongodb: 'MongoDB',
+            mysql: 'MySQL',
+            postgresql: 'PostgreSQL',
+            redis: 'Redis'
+        };
+        return names[type] || type;
     }
 
     private getMetadataFolders(element: DatabaseTreeItem, dbType: 'postgresql' | 'mysql'): DatabaseTreeItem[] {
@@ -383,6 +443,8 @@ export class DatabaseTreeDataProvider implements vscode.TreeDataProvider<Databas
         let columns: ColumnInfo[];
         if (dbType === 'postgresql') {
             columns = await client.getColumns(element.tableName, element.schemaName || 'public');
+        } else if (dbType === 'mysql') {
+            columns = await client.getColumns(element.tableName, element.databaseName);
         } else {
             columns = await client.getColumns(element.tableName);
         }
@@ -415,6 +477,8 @@ export class DatabaseTreeDataProvider implements vscode.TreeDataProvider<Databas
         let constraints: ConstraintInfo[];
         if (dbType === 'postgresql') {
             constraints = await client.getConstraints(element.tableName, element.schemaName || 'public');
+        } else if (dbType === 'mysql') {
+            constraints = await client.getConstraints(element.tableName, element.databaseName);
         } else {
             constraints = await client.getConstraints(element.tableName);
         }
@@ -446,6 +510,8 @@ export class DatabaseTreeDataProvider implements vscode.TreeDataProvider<Databas
         let indexes: IndexInfo[];
         if (dbType === 'postgresql') {
             indexes = await client.getIndexes(element.tableName, element.schemaName || 'public');
+        } else if (dbType === 'mysql') {
+            indexes = await client.getIndexes(element.tableName, element.databaseName);
         } else {
             indexes = await client.getIndexes(element.tableName);
         }
@@ -499,6 +565,8 @@ export class DatabaseTreeDataProvider implements vscode.TreeDataProvider<Databas
         let triggers: TriggerInfo[];
         if (dbType === 'postgresql') {
             triggers = await client.getTriggers(element.tableName, element.schemaName || 'public');
+        } else if (dbType === 'mysql') {
+            triggers = await client.getTriggers(element.tableName, element.databaseName);
         } else {
             triggers = await client.getTriggers(element.tableName);
         }

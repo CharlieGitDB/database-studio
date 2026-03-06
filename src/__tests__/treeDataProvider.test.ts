@@ -81,6 +81,25 @@ describe('DatabaseTreeItem', () => {
         expect((item.iconPath as vscode.ThemeIcon).id).toBe('folder');
     });
 
+    it('should create a typeGroup item with database icon', () => {
+        const item = new DatabaseTreeItem(
+            'MySQL',
+            vscode.TreeItemCollapsibleState.Expanded,
+            'typeGroup',
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            false,
+            undefined,
+            { databaseType: 'mysql' }
+        );
+
+        expect(item.label).toBe('MySQL');
+        expect(item.contextValue).toBe('typeGroup-disconnected');
+        expect((item.iconPath as vscode.ThemeIcon).id).toBe('database');
+    });
+
     it('should create a database item with folder-library icon', () => {
         const item = new DatabaseTreeItem(
             'testdb',
@@ -276,33 +295,151 @@ describe('DatabaseTreeDataProvider', () => {
         });
     });
 
-    describe('getChildren - root level', () => {
-        it('should return connections at root level', async () => {
+    describe('getChildren - root level (type groups)', () => {
+        it('should return type groups at root level', async () => {
             mockConnectionManager.getAllConnections.mockReturnValue([
-                { id: 'conn-1', name: 'MySQL', type: 'mysql' },
-                { id: 'conn-2', name: 'PostgreSQL', type: 'postgresql' },
+                { id: 'conn-1', name: 'My MySQL', type: 'mysql' },
+                { id: 'conn-2', name: 'My PostgreSQL', type: 'postgresql' },
             ]);
 
             const children = await treeProvider.getChildren();
             expect(children).toHaveLength(2);
-            expect(children[0].label).toBe('MySQL (mysql)');
-            expect(children[1].label).toBe('PostgreSQL (postgresql)');
-            expect(children[0].itemType).toBe('connection');
+            expect(children[0].itemType).toBe('typeGroup');
+            expect(children[1].itemType).toBe('typeGroup');
         });
 
-        it('should show connected status', async () => {
+        it('should sort type groups alphanumerically', async () => {
             mockConnectionManager.getAllConnections.mockReturnValue([
-                { id: 'conn-1', name: 'MySQL', type: 'mysql' },
+                { id: 'conn-1', name: 'Redis Cache', type: 'redis' },
+                { id: 'conn-2', name: 'My Mongo', type: 'mongodb' },
+                { id: 'conn-3', name: 'My PG', type: 'postgresql' },
+                { id: 'conn-4', name: 'My MySQL', type: 'mysql' },
             ]);
-            treeProvider.setConnectionStatus('conn-1', true);
 
             const children = await treeProvider.getChildren();
-            expect(children[0].isConnected).toBe(true);
+            expect(children).toHaveLength(4);
+            expect(children[0].label).toBe('MongoDB');
+            expect(children[1].label).toBe('MySQL');
+            expect(children[2].label).toBe('PostgreSQL');
+            expect(children[3].label).toBe('Redis');
+        });
+
+        it('should use display names for type groups', async () => {
+            mockConnectionManager.getAllConnections.mockReturnValue([
+                { id: 'conn-1', name: 'DB', type: 'postgresql' },
+            ]);
+
+            const children = await treeProvider.getChildren();
+            expect(children[0].label).toBe('PostgreSQL');
+        });
+
+        it('should store database type in metadata', async () => {
+            mockConnectionManager.getAllConnections.mockReturnValue([
+                { id: 'conn-1', name: 'DB', type: 'mysql' },
+            ]);
+
+            const children = await treeProvider.getChildren();
+            expect(children[0].metadata).toEqual({ databaseType: 'mysql' });
+        });
+
+        it('should use database icon for type groups', async () => {
+            mockConnectionManager.getAllConnections.mockReturnValue([
+                { id: 'conn-1', name: 'DB', type: 'mysql' },
+            ]);
+
+            const children = await treeProvider.getChildren();
+            expect((children[0].iconPath as vscode.ThemeIcon).id).toBe('database');
+        });
+
+        it('should group multiple connections of same type into one group', async () => {
+            mockConnectionManager.getAllConnections.mockReturnValue([
+                { id: 'conn-1', name: 'MySQL Prod', type: 'mysql' },
+                { id: 'conn-2', name: 'MySQL Dev', type: 'mysql' },
+                { id: 'conn-3', name: 'PG Prod', type: 'postgresql' },
+            ]);
+
+            const children = await treeProvider.getChildren();
+            expect(children).toHaveLength(2);
+            expect(children[0].label).toBe('MySQL');
+            expect(children[1].label).toBe('PostgreSQL');
         });
 
         it('should return empty array when no connections', async () => {
             const children = await treeProvider.getChildren();
             expect(children).toEqual([]);
+        });
+    });
+
+    describe('getChildren - type group level', () => {
+        it('should return connections for a type group sorted alphanumerically', async () => {
+            mockConnectionManager.getAllConnections.mockReturnValue([
+                { id: 'conn-1', name: 'Zebra DB', type: 'mysql' },
+                { id: 'conn-2', name: 'Alpha DB', type: 'mysql' },
+                { id: 'conn-3', name: 'Middle DB', type: 'mysql' },
+            ]);
+
+            const typeGroupItem = new DatabaseTreeItem(
+                'MySQL', vscode.TreeItemCollapsibleState.Collapsed, 'typeGroup',
+                undefined, undefined, undefined, undefined, false, undefined,
+                { databaseType: 'mysql' }
+            );
+
+            const children = await treeProvider.getChildren(typeGroupItem);
+            expect(children).toHaveLength(3);
+            expect(children[0].label).toBe('Alpha DB');
+            expect(children[1].label).toBe('Middle DB');
+            expect(children[2].label).toBe('Zebra DB');
+            expect(children[0].itemType).toBe('connection');
+        });
+
+        it('should only return connections matching the type', async () => {
+            mockConnectionManager.getAllConnections.mockReturnValue([
+                { id: 'conn-1', name: 'MySQL DB', type: 'mysql' },
+                { id: 'conn-2', name: 'PG DB', type: 'postgresql' },
+                { id: 'conn-3', name: 'Another MySQL', type: 'mysql' },
+            ]);
+
+            const typeGroupItem = new DatabaseTreeItem(
+                'MySQL', vscode.TreeItemCollapsibleState.Collapsed, 'typeGroup',
+                undefined, undefined, undefined, undefined, false, undefined,
+                { databaseType: 'mysql' }
+            );
+
+            const children = await treeProvider.getChildren(typeGroupItem);
+            expect(children).toHaveLength(2);
+            expect(children[0].label).toBe('Another MySQL');
+            expect(children[1].label).toBe('MySQL DB');
+        });
+
+        it('should show connected status for connections in type group', async () => {
+            mockConnectionManager.getAllConnections.mockReturnValue([
+                { id: 'conn-1', name: 'MySQL DB', type: 'mysql' },
+            ]);
+            treeProvider.setConnectionStatus('conn-1', true);
+
+            const typeGroupItem = new DatabaseTreeItem(
+                'MySQL', vscode.TreeItemCollapsibleState.Collapsed, 'typeGroup',
+                undefined, undefined, undefined, undefined, false, undefined,
+                { databaseType: 'mysql' }
+            );
+
+            const children = await treeProvider.getChildren(typeGroupItem);
+            expect(children[0].isConnected).toBe(true);
+        });
+
+        it('should not include type in connection label', async () => {
+            mockConnectionManager.getAllConnections.mockReturnValue([
+                { id: 'conn-1', name: 'My Database', type: 'mysql' },
+            ]);
+
+            const typeGroupItem = new DatabaseTreeItem(
+                'MySQL', vscode.TreeItemCollapsibleState.Collapsed, 'typeGroup',
+                undefined, undefined, undefined, undefined, false, undefined,
+                { databaseType: 'mysql' }
+            );
+
+            const children = await treeProvider.getChildren(typeGroupItem);
+            expect(children[0].label).toBe('My Database');
         });
     });
 
@@ -348,7 +485,7 @@ describe('DatabaseTreeDataProvider', () => {
             expect(children[0].label).toBe('public');
         });
 
-        it('should return tables for connected MySQL', async () => {
+        it('should return databases for connected MySQL', async () => {
             treeProvider.setConnectionStatus('conn-1', true);
 
             const connItem = new DatabaseTreeItem(
@@ -358,13 +495,15 @@ describe('DatabaseTreeDataProvider', () => {
 
             mockConnectionManager.getConnection.mockReturnValue({ id: 'conn-1', type: 'mysql' });
             mockDatabaseManager.getClient.mockReturnValue({
-                getTables: jest.fn().mockResolvedValue(['users', 'orders']),
+                getDatabases: jest.fn().mockResolvedValue(['myapp', 'analytics']),
             });
 
             const children = await treeProvider.getChildren(connItem);
             expect(children).toHaveLength(2);
-            expect(children[0].itemType).toBe('table');
-            expect(children[0].label).toBe('users');
+            expect(children[0].itemType).toBe('database');
+            expect(children[0].label).toBe('myapp');
+            expect(children[0].databaseName).toBe('myapp');
+            expect(children[1].label).toBe('analytics');
         });
 
         it('should return Keys folder for connected Redis', async () => {
@@ -492,6 +631,58 @@ describe('DatabaseTreeDataProvider', () => {
             });
 
             const children = await treeProvider.getChildren(schemaItem);
+            expect(children).toEqual([]);
+        });
+    });
+
+    describe('getChildren - database level (MySQL)', () => {
+        it('should return tables when expanding a MySQL database', async () => {
+            const dbItem = new DatabaseTreeItem(
+                'myapp', vscode.TreeItemCollapsibleState.Collapsed, 'database',
+                'conn-1', undefined, 'myapp'
+            );
+
+            mockConnectionManager.getConnection.mockReturnValue({ id: 'conn-1', type: 'mysql' });
+            mockDatabaseManager.getClient.mockReturnValue({
+                getTables: jest.fn().mockResolvedValue(['users', 'orders', 'products']),
+            });
+
+            const children = await treeProvider.getChildren(dbItem);
+            expect(children).toHaveLength(3);
+            expect(children[0].itemType).toBe('table');
+            expect(children[0].label).toBe('users');
+            expect(children[0].tableName).toBe('users');
+            expect(children[0].databaseName).toBe('myapp');
+        });
+
+        it('should pass database name to getTables for MySQL', async () => {
+            const dbItem = new DatabaseTreeItem(
+                'myapp', vscode.TreeItemCollapsibleState.Collapsed, 'database',
+                'conn-1', undefined, 'myapp'
+            );
+
+            const mockGetTables = jest.fn().mockResolvedValue(['users']);
+            mockConnectionManager.getConnection.mockReturnValue({ id: 'conn-1', type: 'mysql' });
+            mockDatabaseManager.getClient.mockReturnValue({
+                getTables: mockGetTables,
+            });
+
+            await treeProvider.getChildren(dbItem);
+            expect(mockGetTables).toHaveBeenCalledWith('myapp');
+        });
+
+        it('should return empty when MySQL database has no tables', async () => {
+            const dbItem = new DatabaseTreeItem(
+                'emptydb', vscode.TreeItemCollapsibleState.Collapsed, 'database',
+                'conn-1', undefined, 'emptydb'
+            );
+
+            mockConnectionManager.getConnection.mockReturnValue({ id: 'conn-1', type: 'mysql' });
+            mockDatabaseManager.getClient.mockReturnValue({
+                getTables: jest.fn().mockResolvedValue([]),
+            });
+
+            const children = await treeProvider.getChildren(dbItem);
             expect(children).toEqual([]);
         });
     });

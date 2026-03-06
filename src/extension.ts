@@ -167,7 +167,7 @@ export function activate(context: vscode.ExtensionContext) {
                     let items: string[] = [];
 
                     if (config.type === 'mysql') {
-                        items = await (client as any).getTables();
+                        items = await (client as any).getTables(item.databaseName);
                     } else if (config.type === 'postgresql') {
                         items = await (client as any).getTables();
                     } else if (config.type === 'mongodb') {
