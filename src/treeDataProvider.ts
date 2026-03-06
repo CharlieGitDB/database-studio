@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { ConnectionManager } from './connectionManager';
-import { ConnectionConfig, DatabaseType, MetadataFolderType, ColumnInfo, ConstraintInfo, IndexInfo, RuleInfo, TriggerInfo } from './types';
+import { DatabaseType, MetadataFolderType, ColumnInfo, ConstraintInfo, IndexInfo, RuleInfo, TriggerInfo } from './types';
 import { DatabaseManager } from './databaseManager';
 
 export class DatabaseTreeItem extends vscode.TreeItem {
@@ -358,18 +358,18 @@ export class DatabaseTreeDataProvider implements vscode.TreeDataProvider<Databas
         try {
             switch (element.folderType) {
                 case 'columns':
-                    return this.getColumnItems(client, element, config.type);
+                    return await this.getColumnItems(client, element, config.type);
                 case 'constraints':
-                    return this.getConstraintItems(client, element, config.type);
+                    return await this.getConstraintItems(client, element, config.type);
                 case 'indexes':
-                    return this.getIndexItems(client, element, config.type);
+                    return await this.getIndexItems(client, element, config.type);
                 case 'rules':
                     if (config.type === 'postgresql') {
-                        return this.getRuleItems(client, element);
+                        return await this.getRuleItems(client, element);
                     }
                     return [];
                 case 'triggers':
-                    return this.getTriggerItems(client, element, config.type);
+                    return await this.getTriggerItems(client, element, config.type);
                 default:
                     return [];
             }

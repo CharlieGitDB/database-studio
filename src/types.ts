@@ -26,6 +26,7 @@ export interface TableSchema {
 export interface QueryResult {
     columns: string[];
     rows: any[];
+    columnTypes?: string[];
 }
 
 // Query Builder Types

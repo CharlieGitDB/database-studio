@@ -6,8 +6,10 @@
     <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src https://cdnjs.cloudflare.com 'unsafe-inline'; script-src https://cdnjs.cloudflare.com 'unsafe-inline'; font-src https://cdnjs.cloudflare.com;">
     <title>MongoDB Viewer</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/codemirror.min.css">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/theme/monokai.min.css">
     <style>
+        :root {
+__THEME_CSS__
+        }
         * {
             box-sizing: border-box;
         }
@@ -572,6 +574,65 @@
             padding: 40px 20px;
             color: var(--vscode-descriptionForeground);
         }
+        .loading-bar {
+            display: none;
+            align-items: center;
+            gap: 10px;
+            padding: 8px 14px;
+            background: var(--vscode-editor-background);
+            border: 1px solid var(--vscode-focusBorder, var(--vscode-textLink-foreground));
+            border-radius: 4px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+            margin-bottom: 8px;
+        }
+        .loading-bar.active {
+            display: flex;
+        }
+        .loading-spinner {
+            width: 18px;
+            height: 18px;
+            border: 2px solid var(--vscode-panel-border);
+            border-top-color: var(--vscode-textLink-foreground);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            flex-shrink: 0;
+        }
+        .loading-label {
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--vscode-foreground);
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        .results-loading button,
+        .results-loading .expandable,
+        .results-loading .action-buttons {
+            pointer-events: none;
+            opacity: 0.5;
+        }
+        /* Custom CodeMirror theme matching VS Code */
+        .cm-s-vscode.CodeMirror          { background: var(--vscode-editor-background); color: var(--vscode-editor-foreground); }
+        .cm-s-vscode .CodeMirror-gutters  { background: var(--vscode-editorGutter-background, var(--vscode-editor-background)); border-right-color: var(--vscode-panel-border); }
+        .cm-s-vscode .CodeMirror-linenumber { color: var(--vscode-editorLineNumber-foreground); }
+        .cm-s-vscode .CodeMirror-cursor   { border-left-color: var(--vscode-editorCursor-foreground); }
+        .cm-s-vscode div.CodeMirror-selected { background: var(--vscode-editor-selectionBackground); }
+        .cm-s-vscode .CodeMirror-activeline-background { background: var(--vscode-editor-lineHighlightBackground, transparent); }
+        .cm-s-vscode .CodeMirror-matchingbracket { color: var(--vscode-editorBracketMatch-foreground, inherit) !important; outline: 1px solid var(--vscode-editorBracketMatch-border, transparent); background: var(--vscode-editorBracketMatch-background, transparent); }
+        .cm-s-vscode .cm-keyword   { color: var(--syntax-keyword, var(--vscode-debugTokenExpression-boolean)); }
+        .cm-s-vscode .cm-atom      { color: var(--syntax-atom, var(--vscode-debugTokenExpression-boolean)); }
+        .cm-s-vscode .cm-number    { color: var(--syntax-number, var(--vscode-debugTokenExpression-number)); }
+        .cm-s-vscode .cm-string    { color: var(--syntax-string, var(--vscode-debugTokenExpression-string)); }
+        .cm-s-vscode .cm-string-2  { color: var(--syntax-string, var(--vscode-debugTokenExpression-string)); }
+        .cm-s-vscode .cm-comment   { color: var(--syntax-comment, var(--vscode-descriptionForeground)); font-style: var(--syntax-comment-style, italic); }
+        .cm-s-vscode .cm-variable   { color: var(--syntax-variable, var(--vscode-editor-foreground)); }
+        .cm-s-vscode .cm-variable-2 { color: var(--syntax-variable, var(--vscode-editor-foreground)); }
+        .cm-s-vscode .cm-def        { color: var(--syntax-variable, var(--vscode-editor-foreground)); }
+        .cm-s-vscode .cm-property   { color: var(--syntax-property, var(--vscode-editor-foreground)); }
+        .cm-s-vscode .cm-operator   { color: var(--vscode-editor-foreground); }
+        .cm-s-vscode .cm-bracket    { color: var(--vscode-editor-foreground); }
+        .cm-s-vscode .cm-builtin    { color: var(--syntax-builtin, var(--syntax-keyword, var(--vscode-debugTokenExpression-boolean))); }
+        .cm-s-vscode .cm-type       { color: var(--syntax-type, var(--vscode-debugTokenExpression-name)); }
     </style>
 </head>
 <body>
@@ -594,6 +655,11 @@
                 <button class="tab" data-tab="indexes">Indexes</button>
             </div>
 
+            <div id="loadingBar" class="loading-bar">
+                <div class="loading-spinner"></div>
+                <span class="loading-label">Running query...</span>
+            </div>
+
             <!-- Documents Tab -->
             <div id="tab-documents" class="tab-content active">
                 <div class="button-group">
@@ -606,7 +672,7 @@
                     <input type="text" id="quickFilter" placeholder="Quick filter (press Enter to search)..." onkeypress="if(event.key==='Enter') applyQuickFilter()">
                 </div>
 
-                <div style="overflow-x: auto;">
+                <div id="documentsWrapper" style="overflow-x: auto;">
                     <table id="dataTable">
                         <thead id="dataTableHead"></thead>
                         <tbody id="dataTableBody"></tbody>

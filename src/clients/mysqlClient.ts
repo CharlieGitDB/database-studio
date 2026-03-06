@@ -26,8 +26,14 @@ export class MySQLClient {
             throw new Error('Not connected');
         }
 
-        const [rows] = await this.connection.query('SHOW TABLES');
-        return (rows as any[]).map(row => Object.values(row)[0] as string);
+        const dbName = (this.connection as any).config?.database;
+        const [rows] = await this.connection.query(
+            `SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES
+             WHERE TABLE_SCHEMA = ? AND TABLE_TYPE = 'BASE TABLE'
+             ORDER BY TABLE_NAME`,
+            [dbName]
+        );
+        return (rows as any[]).map(row => (row as any).TABLE_NAME as string);
     }
 
     async getTableData(tableName: string, limit: number = 100): Promise<QueryResult> {
@@ -38,12 +44,17 @@ export class MySQLClient {
         const query = `SELECT * FROM \`${tableName}\` LIMIT ${limit}`;
         const [rows, fields] = await this.connection.query(query);
 
-        const columns = (fields as mysql.FieldPacket[]).map(field => field.name);
-        const data = rows as any[];
+        const fieldPackets = fields as mysql.FieldPacket[];
+        const columns = fieldPackets.map(field => field.name);
+        const columnTypes = fieldPackets.map(field => (field as any).columnType === 245 ? 'json' : 'other');
+        const data = (rows as any[]).map((row: any) =>
+            columns.map(col => row[col])
+        );
 
         return {
             columns,
-            rows: data
+            rows: data,
+            columnTypes
         };
     }
 
@@ -80,9 +91,14 @@ export class MySQLClient {
 
         if (Array.isArray(fields)) {
             const columns = fields.map(field => field.name);
+            const columnTypes = fields.map(field => (field as any).columnType === 245 ? 'json' : 'other');
+            const data = (rows as any[]).map((row: any) =>
+                columns.map(col => row[col])
+            );
             return {
                 columns,
-                rows: rows as any[]
+                rows: data,
+                columnTypes
             };
         }
 

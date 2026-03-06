@@ -32,7 +32,7 @@ function initEditor(id, readOnly = false) {
 
     editors[id] = CodeMirror.fromTextArea(element, {
         mode: 'application/json',
-        theme: 'monokai',
+        theme: 'vscode',
         lineNumbers: true,
         lineWrapping: true,
         indentUnit: 2,
@@ -195,7 +195,14 @@ window.addEventListener('message', event => {
     }
 });
 
+function showLoading() {
+    document.getElementById('loadingBar').classList.add('active');
+    var w = document.getElementById('documentsWrapper');
+    if (w) w.classList.add('results-loading');
+}
+
 function refresh() {
+    showLoading();
     vscode.postMessage({ command: 'refresh', connectionId, resource, schema });
 }
 
@@ -265,13 +272,18 @@ function saveEdit() {
         return;
     }
 
+    const idIdx = data.columns.indexOf('_id');
+    if (idIdx === -1) {
+        alert('Cannot find _id column to identify the document');
+        return;
+    }
     vscode.postMessage({
         command: 'edit',
         connectionId,
         resource,
         schema,
         data: {
-            id: data.rows[currentEditRow][0],
+            id: data.rows[currentEditRow][idIdx],
             updates
         }
     });
@@ -283,12 +295,17 @@ function deleteRow(rowIdx) {
         return;
     }
 
+    const idIdx = data.columns.indexOf('_id');
+    if (idIdx === -1) {
+        alert('Cannot find _id column to identify the document');
+        return;
+    }
     vscode.postMessage({
         command: 'delete',
         connectionId,
         resource,
         schema,
-        data: { id: data.rows[rowIdx][0] }
+        data: { id: data.rows[rowIdx][idIdx] }
     });
 }
 
@@ -299,7 +316,8 @@ function executeMongoQuery() {
         alert('Please enter a MongoDB query');
         return;
     }
-    vscode.postMessage({ command: 'executeQuery', connectionId, query, schema: resource });
+    showLoading();
+    vscode.postMessage({ command: 'executeQuery', connectionId, query, resource, schema });
 }
 
 function clearQuery() {
@@ -316,6 +334,7 @@ function executeAggregation() {
         alert('Please enter an aggregation pipeline');
         return;
     }
+    showLoading();
     vscode.postMessage({ command: 'executeAggregate', connectionId, resource, pipeline });
 }
 
@@ -674,6 +693,7 @@ function updateFinalPreview() {
 }
 
 function executeVisualQuery() {
+    showLoading();
     // Build the complete query
     const filter = buildQueryFromFilters();
 

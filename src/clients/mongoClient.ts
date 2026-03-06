@@ -105,10 +105,18 @@ export class MongoDBClient {
         }
 
         const collection = targetDb.collection(collectionName);
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
         const { _id, ...updateFields } = updates;
 
+        let objectId: ObjectId;
+        try {
+            objectId = new ObjectId(id);
+        } catch {
+            throw new Error(`Invalid document ID: "${id}" is not a valid ObjectId`);
+        }
+
         await collection.updateOne(
-            { _id: new ObjectId(id) },
+            { _id: objectId },
             { $set: updateFields }
         );
     }
@@ -123,8 +131,15 @@ export class MongoDBClient {
             throw new Error('No database specified');
         }
 
+        let objectId: ObjectId;
+        try {
+            objectId = new ObjectId(id);
+        } catch {
+            throw new Error(`Invalid document ID: "${id}" is not a valid ObjectId`);
+        }
+
         const collection = targetDb.collection(collectionName);
-        await collection.deleteOne({ _id: new ObjectId(id) });
+        await collection.deleteOne({ _id: objectId });
     }
 
     async executeQuery(collectionName: string, query: string, databaseName?: string): Promise<QueryResult> {
@@ -275,8 +290,15 @@ export class MongoDBClient {
             throw new Error('No database specified');
         }
 
+        let objectId: ObjectId;
+        try {
+            objectId = new ObjectId(id);
+        } catch {
+            throw new Error(`Invalid document ID: "${id}" is not a valid ObjectId`);
+        }
+
         const collection = targetDb.collection(collectionName);
-        return await collection.findOne({ _id: new ObjectId(id) });
+        return await collection.findOne({ _id: objectId });
     }
 
     isConnected(): boolean {

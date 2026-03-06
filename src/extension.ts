@@ -4,7 +4,6 @@ import { DatabaseManager } from './databaseManager';
 import { DatabaseTreeDataProvider } from './treeDataProvider';
 import { DataViewerPanel } from './webviewProvider';
 import { ConnectionFormPanel } from './connectionFormPanel';
-import { ConnectionConfig, DatabaseType } from './types';
 
 export function activate(context: vscode.ExtensionContext) {
     console.log('Database Studio by Reswob extension is now active');
@@ -172,7 +171,7 @@ export function activate(context: vscode.ExtensionContext) {
                     } else if (config.type === 'postgresql') {
                         items = await (client as any).getTables();
                     } else if (config.type === 'mongodb') {
-                        items = await (client as any).getCollections();
+                        items = await (client as any).getCollections(item.databaseName);
                     } else if (config.type === 'redis') {
                         items = await (client as any).getKeys().then((keys: any[]) => keys.map(k => k.key));
                     }
